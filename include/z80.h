@@ -5,11 +5,12 @@
 
 using u8 = std::uint8_t;
 using u16 = std::uint16_t;
+using s8 = std::int8_t;
 
 template<typename Memory>
 class z80 {
 public:
-    explicit z80(Memory mem) : memory_{mem} {}
+    explicit z80(Memory mem) : memory_{mem} { }
 
     int run(int cycles);
     void interrupt();
@@ -33,6 +34,10 @@ private:
     static constexpr u8 e {0b011}; // register E
     static constexpr u8 h {0b100}; // register H
     static constexpr u8 l {0b101}; // register L
+    static constexpr u8 bc {0b00}; // register pair BC
+    static constexpr u8 de {0b01}; // register pair BC
+    static constexpr u8 hl {0b10}; // register pair BC
+    static constexpr u8 sp {0b11}; // register pair BC
 
     enum class AddressMode {
         Immediate,
@@ -45,6 +50,11 @@ private:
         Implied,
         Indirect,
         Bit
+    };
+
+    enum class Destination {
+        A, B, C, D, E, H, L,
+        BC, DE, HL, SP
     };
 
     enum class Operation {
@@ -64,7 +74,21 @@ private:
     {
         switch (op) {
             case Operation::NOP: return;
+            case Operation::LD: return load(operand);
+        }
+    }
 
+    template <Operation op, Destination dst>
+    void execute_(u16 operand)
+    {
+        u16& reg = pair_[0];
+        if constexpr (dst == Destination::A)
+            reg = a_[0];
+        else if constexpr (dst == Destination::B)
+
+        switch (op) {
+            case Operation::NOP: return;
+            case Operation::LD: return load(reg, operand);
         }
     }
 
@@ -91,6 +115,31 @@ private:
             execute_<op>();
         else if constexpr (mode == AddressMode::Bit)
             execute_<op>();
+    }
+
+    template<AddressMode mode, Operation op, Destination dst>
+    consteval void decode_()
+    {
+        if constexpr (mode == AddressMode::Immediate)
+            execute_<op, dst>(read8(pc_++));
+        else if constexpr (mode == AddressMode::ImmediateEx)
+            execute_<op, dst>(read16(pc_++));
+        else if constexpr (mode == AddressMode::ModifiedZeroPage)
+            execute_<op, dst>();
+        else if constexpr (mode == AddressMode::Relative)
+            execute_<op, dst>();
+        else if constexpr (mode == AddressMode::Extended)
+            execute_<op, dst>();
+        else if constexpr (mode == AddressMode::Indexed)
+            execute_<op, dst>();
+        else if constexpr (mode == AddressMode::Register)
+            execute_<op, dst>();
+        else if constexpr (mode == AddressMode::Implied)
+            execute_<op, dst>();
+        else if constexpr (mode == AddressMode::Indirect)
+            execute_<op, dst>();
+        else if constexpr (mode == AddressMode::Bit)
+            execute_<op, dst>();
     }
 
     void tick_()
@@ -127,18 +176,24 @@ private:
     // start instruction pages
     static constexpr auto instruction {
         &execute_<Operation::NOP>, // 0x00: nop
-        &decode_<AddressMode::
-        &decode_<AddressMode::Immediate
+        &decode_<AddressMode::ImmediateEx, Operation::LD, Destination::BC>, // $01: ld bc, nn
+        &decode_<AddressMode::ImmediateEx, Operation::LD>, // $10: ld de, nn
         &decode_<AddressMode::Immediate, Operation::ADD>, // $86
         &decode_<AddressMode::Bit, Operation::ADD>, // $87
     };
     // end instruction pages
 
-    static void load(u8&, u8);
+    void setHi_(const u8 rp, const u8 val) { pair_[0][rp] = pair_[0][rp] & 0x00FFU | val << 8U; }
+    void setLo_(const u8 rp, const u8 val) { pair_[0][rp] = pair_[0][rp] & 0xFF00U | val; }
+    [[nodiscard]] static u8 hi_(const u16 val) { return (val & 0xFF00) >> 8U; }
+    [[nodiscard]] static u8 lo_(const u16 val) { return val & 0xFF; }
+
+    static void load(u16&, u16);
 
     // registers
-    u8 reg_[2][8] {};
+    u16 pair_[2][3] {};
     u8 sf_[2] {}, zf_[2] {}, yf_[2] {}, hf_[2] {}, xf_[2] {}, pf_[2] {}, nf_[2] {}, cf_[2] {};
+    u8 a_[2] {};
     u16 pc_ {}, sp_ {}, ix_ {}, iy_ {};
     u8 i_ {}, r_ {};
 
@@ -157,7 +212,7 @@ int z80<Memory>::run(const int cycles)
 }
 
 template<typename Memory>
-void z80<Memory>::load(u8& dst, const u8 src)
+void z80<Memory>::load(u16& dst, const u16 src)
 {
     dst = src;
 }
