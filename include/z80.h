@@ -37,6 +37,7 @@ private:
     enum class AddressMode {
         Immediate,
         ImmediateEx,
+        ModifiedZeroPage,
         Relative,
         Extended,
         Indexed,
@@ -47,19 +48,19 @@ private:
     };
 
     enum class Operation {
-        ADC,  ADD,  AND,  BIT,  CALL, CCF,  CP,   CPD,
-        CPDR, CPI,  CPIR, CPL,  DAA,  DEC,  DI,   DJNZ,
-        EI,   EX,   EXX,  HALT, IM,   IN,   INC,  IND,
-        INDR, INI,  INIR, JP,   JR,   LD,   LDD,  LDDR,
-        LDI,  LDIR, NEG,  NOP,  OR,   OTDR, OTIR, OUT,
-        OUTD, OUTI, POP,  PUSH, RES,  RET,  RETI, RETN,
-        RL,   RLA,  RLC,  RLCA, RLD,  RR,   RRA,  RRCA,
-        RRD,  RST,  SBC,  SCF,  SET,  SLA,  SRA,  SRL,
-        SUB,  XOR
+        ADC, ADD, AND, CALL, CCF, CP, CPD, CPDR,
+        CPI, CPIR, CPL, DAA, DEC, DI, DJNZ, EI,
+        EX, EXX, HALT, IM, IN, INC, IND, INDR,
+        INI, INIR, JP, JR, LD, LDD, LDDR, LDI,
+        LDIR, NEG, NOP, OR, OTDR, OTIR, OUT, OUTD,
+        OUTI, POP, PUSH, RES, RET, RETI, RETN, RL,
+        RLA, RLC, RLCA, RLD, RR, RRA, RRCA, RRD,
+        RST, SBC, SCF, SET, SLA, SRA, SRL, SUB,
+        XOR
     };
 
     template <Operation op>
-    void execute_(u8 operand)
+    void execute_(u16 operand)
     {
         switch (op) {
             case Operation::NOP: return;
@@ -71,8 +72,10 @@ private:
     consteval void decode_()
     {
         if constexpr (mode == AddressMode::Immediate)
-            execute_<op>();
+            execute_<op>(read8(pc_++));
         else if constexpr (mode == AddressMode::ImmediateEx)
+            execute_<op>(read16(pc_++));
+        else if constexpr (mode == AddressMode::ModifiedZeroPage)
             execute_<op>();
         else if constexpr (mode == AddressMode::Relative)
             execute_<op>();
@@ -124,11 +127,14 @@ private:
     // start instruction pages
     static constexpr auto instruction {
         &execute_<Operation::NOP>, // 0x00: nop
+        &decode_<AddressMode::
         &decode_<AddressMode::Immediate
         &decode_<AddressMode::Immediate, Operation::ADD>, // $86
         &decode_<AddressMode::Bit, Operation::ADD>, // $87
     };
     // end instruction pages
+
+    static void load(u8&, u8);
 
     // registers
     u8 reg_[2][8] {};
@@ -148,6 +154,12 @@ int z80<Memory>::run(const int cycles)
     requested_ = cycles;
     while (requested_ > 0) { tick_(); }
     return requested_;
+}
+
+template<typename Memory>
+void z80<Memory>::load(u8& dst, const u8 src)
+{
+    dst = src;
 }
 
 #endif //Z80_LIBRARY_H
