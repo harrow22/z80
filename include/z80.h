@@ -2,16 +2,14 @@
 #define Z80_LIBRARY_H
 
 #include <cstdint>
+#include <array>
 
 using u8 = std::uint8_t;
 using u16 = std::uint16_t;
-using s8 = std::int8_t;
 
 template<typename Memory>
 class z80 {
 public:
-    explicit z80(Memory mem) : memory_{mem} { }
-
     int run(int cycles);
     void interrupt();
     void write(u16 addr, u8 val) { memory_.write(addr, val); }
@@ -30,25 +28,9 @@ private:
     static constexpr u8 nf {0b00000010}; // bit 1: add/subtract flag
     static constexpr u8 cf {0b00000001}; // bit 0: carry flag
 
-    /*
-    static constexpr u8 a {0b111}; // register A
-    static constexpr u8 b {0b000}; // register B
-    static constexpr u8 c {0b001}; // register C
-    static constexpr u8 d {0b010}; // register D
-    static constexpr u8 e {0b011}; // register E
-    static constexpr u8 h {0b100}; // register H
-    static constexpr u8 l {0b101}; // register L
-    static constexpr u8 bc {0b00}; // register pair BC
-    static constexpr u8 de {0b01}; // register pair DE
-    static constexpr u8 hl {0b10}; // register pair HL
-    static constexpr u8 sp {0b11}; // register pair SP
-    */
-
     enum class AddressMode {
         Immediate,
         ImmediateEx,
-        //Relative,
-        //ModifiedZeroPage,
         Extended,
         IndexedIX,
         IndexedIY,
@@ -65,126 +47,84 @@ private:
         RegisterSP,
         RegisterIX,
         RegisterIY,
-        //Implied,
         RegisterIndirectBC,
         RegisterIndirectDE,
         RegisterIndirectHL,
         RegisterIndirectSP,
-        //Bit
     };
 
     template<AddressMode mode>
-    consteval void setOperand(u16 val)
+    void setOperand(u16 val)
     {
-        //if constexpr (mode == AddressMode::Immediate)
-            //write(fetch8_(), val);
-        //else if constexpr (mode == AddressMode::ImmediateEx)
-            //write(fetch16_(), val);
-        //else if constexpr (mode == AddressMode::ModifiedZeroPage)
-            //return 0;
-        //else if constexpr (mode == AddressMode::Relative)
-            //return 0;
-        if constexpr (mode == AddressMode::Extended)
+        if (mode == AddressMode::Extended)
             write(fetch16_(), val);
-        else if constexpr (mode == AddressMode::IndexedIX)
+        else if (mode == AddressMode::IndexedIX)
             write(fetch8_() + ix_, val);
-        else if constexpr (mode == AddressMode::IndexedIY)
+        else if (mode == AddressMode::IndexedIY)
             write(fetch8_() + iy_, val);
-        else if constexpr (mode == AddressMode::Accumulator)
+        else if (mode == AddressMode::Accumulator)
             registers_.a = val;
-        else if constexpr (mode == AddressMode::RegisterB)
+        else if (mode == AddressMode::RegisterB)
             setHi_(registers_.bc, val);
-        else if constexpr (mode == AddressMode::RegisterC)
+        else if (mode == AddressMode::RegisterC)
             setLo_(registers_.bc, val);
-        else if constexpr (mode == AddressMode::RegisterD)
+        else if (mode == AddressMode::RegisterD)
             setHi_(registers_.de, val);
-        else if constexpr (mode == AddressMode::RegisterE)
+        else if (mode == AddressMode::RegisterE)
             setLo_(registers_.de, val);
-        else if constexpr (mode == AddressMode::RegisterH)
+        else if (mode == AddressMode::RegisterH)
             setHi_(registers_.hl, val);
-        else if constexpr (mode == AddressMode::RegisterL)
+        else if (mode == AddressMode::RegisterL)
             setLo_(registers_.hl, val);
-        else if constexpr (mode == AddressMode::RegisterBC)
+        else if (mode == AddressMode::RegisterBC)
             registers_.bc = val;
-        else if constexpr (mode == AddressMode::RegisterDE)
+        else if (mode == AddressMode::RegisterDE)
             registers_.de = val;
-        else if constexpr (mode == AddressMode::RegisterHL)
+        else if (mode == AddressMode::RegisterHL)
             registers_.hl = val;
-        else if constexpr (mode == AddressMode::RegisterSP)
-            registers_.sp = val;
-        else if constexpr (mode == AddressMode::RegisterIX)
+        else if (mode == AddressMode::RegisterSP)
+            sp_ = val;
+        else if (mode == AddressMode::RegisterIX)
             ix_ = val;
-        else if constexpr (mode == AddressMode::RegisterIY)
+        else if (mode == AddressMode::RegisterIY)
             iy_ = val;
-        //else if constexpr (mode == AddressMode::Implied)
-            //return 0;
-        else if constexpr (mode == AddressMode::RegisterIndirectBC)
+        else if (mode == AddressMode::RegisterIndirectBC)
             write(registers_.bc, val);
-        else if constexpr (mode == AddressMode::RegisterIndirectDe)
+        else if (mode == AddressMode::RegisterIndirectDE)
             write(registers_.de, val);
-        else if constexpr (mode == AddressMode::RegisterIndirectHL)
+        else if (mode == AddressMode::RegisterIndirectHL)
             write(registers_.hl, val);
-        else if constexpr (mode == AddressMode::RegisterIndirectSP)
+        else if (mode == AddressMode::RegisterIndirectSP)
             write(sp_, val);
-        //else if constexpr (mode == AddressMode::Bit)
-            //return 0;
     }
 
     template<AddressMode mode>
-    consteval u16 getOperand()
+    u16 getOperand()
     {
-        if constexpr (mode == AddressMode::Immediate)
-            return fetch8_();
-        else if constexpr (mode == AddressMode::ImmediateEx)
-            return fetch16_();
-        //else if constexpr (mode == AddressMode::ModifiedZeroPage)
-            //return 0;
-        //else if constexpr (mode == AddressMode::Relative)
-            //return 0;
-        else if constexpr (mode == AddressMode::Extended)
-            return read8(fetch16_());
-        else if constexpr (mode == AddressMode::IndexedIX)
-            return read8(fetch8_() + ix_);
-        else if constexpr (mode == AddressMode::IndexedIY)
-            return read8(fetch8_() + iy_);
-        else if constexpr (mode == AddressMode::Accumulator)
-            return registers_.a;
-        else if constexpr (mode == AddressMode::RegisterB)
-            return hi_(registers_.bc);
-        else if constexpr (mode == AddressMode::RegisterC)
-            return lo_(registers_.bc);
-        else if constexpr (mode == AddressMode::RegisterD)
-            return hi_(registers_.de);
-        else if constexpr (mode == AddressMode::RegisterE)
-            return lo_(registers_.de);
-        else if constexpr (mode == AddressMode::RegisterH)
-            return hi_(registers_.hl);
-        else if constexpr (mode == AddressMode::RegisterL)
-            return lo_(registers_.hl);
-        else if constexpr (mode == AddressMode::RegisterBC)
-            return registers_.bc;
-        else if constexpr (mode == AddressMode::RegisterDE)
-            return registers_.de;
-        else if constexpr (mode == AddressMode::RegisterHL)
-            return registers_.hl;
-        else if constexpr (mode == AddressMode::RegisterSP)
-            return registers_.sp;
-        else if constexpr (mode == AddressMode::RegisterIX)
-            return ix_;
-        else if constexpr (mode == AddressMode::RegisterIY)
-            return iy_;
-        //else if constexpr (mode == AddressMode::Implied)
-            //return 0;
-        else if constexpr (mode == AddressMode::RegisterIndirectBC)
-            return read8(registers_.bc);
-        else if constexpr (mode == AddressMode::RegisterIndirectDe)
-            return read8(registers_.de);
-        else if constexpr (mode == AddressMode::RegisterIndirectHL)
-            return read8(registers_.hl);
-        else if constexpr (mode == AddressMode::RegisterIndirectSP)
-            return read8(sp_);
-        //else if constexpr (mode == AddressMode::Bit)
-            //return 0;
+        switch (mode) {
+            case AddressMode::Immediate: return fetch8_();
+            case AddressMode::ImmediateEx: return fetch16_();
+            case AddressMode::Extended: return read8(fetch16_());
+            case AddressMode::IndexedIX: return read8(fetch8_() + ix_);
+            case AddressMode::IndexedIY: return read8(fetch8_() + iy_);
+            case AddressMode::Accumulator: return registers_.a;
+            case AddressMode::RegisterB: return hi_(registers_.bc);
+            case AddressMode::RegisterC: return lo_(registers_.bc);
+            case AddressMode::RegisterD: return hi_(registers_.de);
+            case AddressMode::RegisterE: return lo_(registers_.de);
+            case AddressMode::RegisterH: return hi_(registers_.hl);
+            case AddressMode::RegisterL: return lo_(registers_.hl);
+            case AddressMode::RegisterBC: return registers_.bc;
+            case AddressMode::RegisterDE: return registers_.de;
+            case AddressMode::RegisterHL: return registers_.hl;
+            case AddressMode::RegisterSP: return sp_;
+            case AddressMode::RegisterIX: return ix_;
+            case AddressMode::RegisterIY: return iy_;
+            case AddressMode::RegisterIndirectBC: return read8(registers_.bc);
+            case AddressMode::RegisterIndirectDE: return read8(registers_.de);
+            case AddressMode::RegisterIndirectHL: return read8(registers_.hl);
+            case AddressMode::RegisterIndirectSP: return read8(sp_);
+        }
     }
 
     static void setHi_(u16& rp, const u8 val) { rp = rp & 0x00FFU | val << 8U; }
@@ -195,7 +135,7 @@ private:
     [[nodiscard]] u16 fetch16_() { pc_ += 2; return read16(pc_ - 2); };
     void tick_();
 
-    void nop();
+    void nop() { }
     template<AddressMode mode1, AddressMode mode2>
     void ld() { setOperand<mode1>(getOperand<mode2>()); }
     template<AddressMode mode>
@@ -205,13 +145,13 @@ private:
 
 
     // start main instructions
-    static constexpr auto instruction {
-        &nop, // $00: nop
-        &ld<AddressMode::RegisterBC, AddressMode::ImmediateEx>, // $01: ld bc, nn
-        &ld<AddressMode::RegisterIndirectBC, AddressMode::Accumulator>, // $02: ld (bc), a
-        &inc<AddressMode::RegisterBC>, // $03: inc bc
-        &inc<AddressMode::RegisterB>, // $04: inc b
-        &dec<AddressMode::RegisterB>, // $05: dec b
+    static constexpr std::array<void (z80::*)(), 256> instruction {
+        &z80::nop, // $00: nop
+        &z80::ld<AddressMode::RegisterBC, AddressMode::ImmediateEx>, // $01: ld bc, nn
+        &z80::ld<AddressMode::RegisterIndirectBC, AddressMode::Accumulator>, // $02: ld (bc), a
+        &z80::inc<AddressMode::RegisterBC>, // $03: inc bc
+        &z80::inc<AddressMode::RegisterB>, // $04: inc b
+        &z80::dec<AddressMode::RegisterB>, // $05: dec b
 
     };
 
@@ -221,7 +161,7 @@ private:
     // end main instructions
 
     // start bit instructions ($CB)
-    static constexpr auto bitInstruction {
+    static constexpr std::array<void (z80::*)(), 256> bitInstruction {
 
     };
 
@@ -231,7 +171,7 @@ private:
     // end bit instructions
 
     // start misc. instructions ($ED)
-    static constexpr auto miscInstruction {
+    static constexpr std::array<void (z80::*)(), 256> miscInstruction {
 
     };
 
@@ -241,7 +181,7 @@ private:
     // end misc. instructions
 
     // start ix instructions ($DD)
-    static constexpr auto ixInstruction {
+    static constexpr std::array<void (z80::*)(), 256> ixInstruction {
 
     };
 
@@ -251,7 +191,7 @@ private:
     // end ix instructions
 
     // start ix bit instructions ($DDCB)
-    static constexpr auto ixBitInstruction {
+    static constexpr std::array<void (z80::*)(), 256> ixBitInstruction {
 
     };
 
@@ -261,7 +201,7 @@ private:
     // end ix bit instructions
 
     // start iy instructions ($FD)
-    static constexpr auto iyInstruction {
+    static constexpr std::array<void (z80::*)(), 256> iyInstruction {
 
     };
 
@@ -271,7 +211,7 @@ private:
     // end iy instructions
 
     // start iy bit instructions ($FDCB)
-    static constexpr auto iyBitInstruction {
+    static constexpr std::array<void (z80::*)(), 256> iyBitInstruction {
 
     };
 
@@ -325,34 +265,34 @@ void z80<Memory>::tick_()
 
     if (opcode == 0xCB) {
         opcode = fetch8_();
-        bitInstruction[opcode]();
+        (this->*bitInstruction[opcode])();
         requested_ -= bitCycles[opcode];
     } else if (opcode == 0xED) {
         opcode = fetch8_();
-        miscInstruction[opcode]();
+        (this->*miscInstruction[opcode])();
         requested_ -= miscCycles[opcode];
     } else if (opcode == 0xDD) {
         opcode = fetch8_();
         if (opcode == 0xCB) {
             opcode = fetch8_();
-            ixBitInstruction[opcode]();
+            (this->*ixBitInstruction[opcode])();
             requested_ -= ixBitCycles[opcode];
         } else {
-            ixInstruction[opcode]();
+            (this->*ixBitInstruction[opcode])();
             requested_ -= ixCycles[opcode];
         }
     } else if (opcode == 0xFD) {
         opcode = fetch8_();
         if (opcode == 0xCB) {
             opcode = fetch8_();
-            iyBitInstruction[opcode]();
+            (this->*iyBitInstruction[opcode])();
             requested_ -= iyBitCycles[opcode];
         } else {
-            iyInstruction[opcode]();
+            (this->*iyInstruction[opcode])();
             requested_ -= iyCycles[opcode];
         }
     } else {
-        instruction[opcode]();
+        (this->*instruction[opcode])();
         requested_ -= cycles[opcode];
     }
 }
