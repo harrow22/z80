@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <algorithm>
+#include <bit>
 #include <array>
 
 using u8 = std::uint8_t;
@@ -20,7 +21,38 @@ public:
     u8 read8(u16 addr) { return memory_.read8(addr); }
     u16 read16(u16 addr) { return memory_.read16(addr); }
 
+    /**
+     * \brief Flags are stored separetly, to get them as a single status byte they must be or'd together.
+     * \return The flag register as a single byte.
+     */
     [[nodiscard]] u8 flag_() const { return flags_.sf | flags_.zf | flags_.yf | flags_.hf | flags_.xf | flags_.pf | flags_.nf | flags_.cf; }
+
+    // internals
+    struct Registers {
+        u8 a {};
+        u8 b {};
+        u8 c {};
+        u8 d {};
+        u8 e {};
+        u8 h {};
+        u8 l {};
+    };
+
+    struct Flags {
+        u8 sf {};
+        u8 zf {};
+        u8 yf {};
+        u8 hf {};
+        u8 xf {};
+        u8 pf {};
+        u8 nf {};
+        u8 cf {};
+    };
+
+    Registers regs_ {};
+    Flags flags_ {};
+    u16 pc_ {}, sp_ {}, ix_ {}, iy_ {};
+    u8 i_ {}, r_ {};
 private:
     static constexpr u8 sf {0b10000000}; // bit 7: sign flag
     static constexpr u8 zf {0b01000000}; // bit 6: zero flag
@@ -78,9 +110,9 @@ private:
             case AddressMode::RegisterSP: sp_ = val; return;
             case AddressMode::RegisterIX: ix_ = val; return;
             case AddressMode::RegisterIY: iy_ = val; return;
-            case AddressMode::RegisterIndirectBC: write(regs_.bc, val); return;
-            case AddressMode::RegisterIndirectDE: write(regs_.de, val); return;
-            case AddressMode::RegisterIndirectHL: write(regs_.hl, val); return;
+            case AddressMode::RegisterIndirectBC: write(regs_.b << 8 | regs_.c, val); return;
+            case AddressMode::RegisterIndirectDE: write(regs_.d << 8 | regs_.e, val); return;
+            case AddressMode::RegisterIndirectHL: write(regs_.h << 8 | regs_.l, val); return;
             case AddressMode::RegisterIndirectSP: write(sp_, val); return;
         }
     }
@@ -107,9 +139,9 @@ private:
             case AddressMode::RegisterSP: return sp_;
             case AddressMode::RegisterIX: return ix_;
             case AddressMode::RegisterIY: return iy_;
-            case AddressMode::RegisterIndirectBC: return read8(regs_.bc);
-            case AddressMode::RegisterIndirectDE: return read8(regs_.de);
-            case AddressMode::RegisterIndirectHL: return read8(regs_.hl);
+            case AddressMode::RegisterIndirectBC: return read8(regs_.b << 8 | regs_.c);
+            case AddressMode::RegisterIndirectDE: return read8(regs_.d << 8 | regs_.e);
+            case AddressMode::RegisterIndirectHL: return read8(regs_.h << 8 | regs_.l);
             case AddressMode::RegisterIndirectSP: return read8(sp_);
         }
     }
@@ -129,7 +161,6 @@ private:
     [[nodiscard]] u8 fetch8_() { return read8(pc_++); }
     [[nodiscard]] u16 fetch16_() { pc_ += 2; return read16(pc_ - 2); };
     void tick_();
-
     void nop() { }
 
     template<AddressMode mode1, AddressMode mode2>
@@ -138,10 +169,10 @@ private:
     template<AddressMode mode>
     void incb()
     {
-        u8 operand {getOperand<mode>()};
-        const u8 res {++operand};
+        const u8 operand {static_cast<u8>(getOperand<mode>())};
+        const u8 res {static_cast<u8>(operand + 1U)};
         flags_.hf = (operand & 0xFU) == 0; // only case for half carry is 0b1111 + 0b1 = 0b10000;
-        flags_.pf = res < operand ? pf : 0;
+        flags_.pf = ((operand ^ res) & (1U ^ res) & 0x80U) != 0 ? pf : 0;
         flags_.nf = 0;
         flags_.sf = res & sf;
         flags_.zf = res == 0 ? zf : 0;
@@ -149,16 +180,17 @@ private:
         flags_.xf = res & xf;
         setOperand<mode>(res);
     }
+
     template<AddressMode mode>
     void incw() { setOperand<mode>(getOperand<mode>() + 1); }
 
     template <AddressMode mode>
     void decb()
     {
-        u8 operand {getOperand<mode>()};
+        u8 operand {static_cast<u8>(getOperand<mode>())};
         const u8 res {--operand};
         flags_.hf = (operand & 0xFU) != 0xF; // only case for half borrow is 0b10000 - 0b1 = 0b1111
-        flags_.pf = res > operand ? pf : 0;
+        flags_.pf = ((res ^ operand) & (1 ^ operand) & 0x80) != 0 ? pf : 0;
         flags_.nf = nf;
         flags_.sf = res & sf;
         flags_.zf = res == 0 ? zf : 0;
@@ -166,6 +198,7 @@ private:
         flags_.xf = res & xf;
         setOperand<mode>(res);
     }
+
     template<AddressMode mode>
     void decw() { setOperand<mode>(getOperand<mode>() + 1); }
 
@@ -201,7 +234,7 @@ private:
     {
         const u16 addend {getOperand<mode1>()};
         const u16 augend {getOperand<mode2>()};
-        const u32 sum {addend + augend};
+        const u32 sum {static_cast<u32>(addend + augend)};
         flags_.cf = sum > 0xFFFFU ? cf : 0;
         flags_.hf = (addend ^ augend ^ sum) & 0x10U ? hf : 0;
         flags_.nf = 0;
@@ -234,7 +267,7 @@ private:
     void djnz()
     {
         if (--regs_.b != 0 ) {
-            const s8 val {read8(pc_)};
+            const s8 val {static_cast<s8>(read8(pc_))};
             pc_ += val;
         }
     }
@@ -243,11 +276,53 @@ private:
     void jr()
     {
         if (getCondition<cond>()) {
-            const s8 val {read8(pc_)};
+            const s8 val {static_cast<s8>(read8(pc_))};
             pc_ += val;
         }
     }
 
+    void daa()
+    {
+        u8 correction = 0;
+        flags_.cf = 0;
+
+        if (flags_.hf or (!flags_.nf and (regs_.a & 0xF) > 9)) {
+            correction |= 0x6;
+        }
+
+        if (flags_.cf or (!flags_.nf and (regs_.a & 0xF0) > 0x99)) {
+            correction |= 0x60;
+            flags_.cf = cf;
+        }
+
+        regs_.a += flags_.nf ? -correction : correction;
+        flags_.pf = std::popcount(regs_.a) % 2 == 0 ? pf : 0;
+        flags_.sf = regs_.a & sf;
+        flags_.zf = regs_.a == 0 ? zf : 0;
+        flags_.yf = regs_.a & yf;
+        flags_.xf = regs_.a & xf;
+    }
+
+    void cpl()
+    {
+        regs_.a = ~regs_.a;
+        flags_.nf = nf;
+        flags_.hf = hf;
+    }
+
+    void scf()
+    {
+        flags_.cf = cf;
+        flags_.nf = 0;
+        flags_.hf = 0;
+    }
+
+    void ccf()
+    {
+        flags_.cf = flags_.cf ? 0 : cf;
+        flags_.hf = flags_.cf;
+        flags_.nf = 0;
+    }
 
     // start main instructions
     static constexpr std::array<void (z80::*)(), 256> instruction {
@@ -270,10 +345,10 @@ private:
         &z80::djnz, // $10: djnz d
         &z80::ld<AddressMode::RegisterDE, AddressMode::ImmediateEx>, // $11: ld de, nn
         &z80::ld<AddressMode::RegisterIndirectDE, AddressMode::Accumulator>, // $12: ld (de), a
-        &z80::incw<AddressMode::DE>, // $13: inc de
-        &z80::incb<AddressMode::D>, // $14: inc d
-        &z80::decb<AddressMode::D>, // $15: dec d
-        &z80::ld<AddressMode::D, AddressMode::Immediate>, // $16: ld d, n
+        &z80::incw<AddressMode::RegisterDE>, // $13: inc de
+        &z80::incb<AddressMode::RegisterD>, // $14: inc d
+        &z80::decb<AddressMode::RegisterD>, // $15: dec d
+        &z80::ld<AddressMode::RegisterD, AddressMode::Immediate>, // $16: ld d, n
         &z80::rla, // $17: rla
         &z80::jr<Condition::Null>, // $18: jr d
         &z80::addw<AddressMode::RegisterHL, AddressMode::RegisterDE>, // $19: add hl, de
@@ -284,6 +359,85 @@ private:
         &z80::ld<AddressMode::RegisterE, AddressMode::Immediate>, // $1E: ld e, n
         &z80::rra, // $1F: rra
         &z80::jr<Condition::NZ>, // $20: jr nz, d
+        &z80::ld<AddressMode::RegisterHL, AddressMode::ImmediateEx>, // $21: ld hl, nn
+        &z80::ld<AddressMode::Extended, AddressMode::RegisterHL>, // $22: ld (nn), hl
+        &z80::incw<AddressMode::RegisterHL>, // $23: inc hl
+        &z80::incb<AddressMode::RegisterH>, // $24: inc h
+        &z80::decb<AddressMode::RegisterH>, // $25: dec h
+        &z80::ld<AddressMode::RegisterH, AddressMode::Immediate>, // $26: ld h, n
+        &z80::daa, // $27: daa
+        &z80::jr<Condition::Z>, // $28: jr z, d
+        &z80::addw<AddressMode::RegisterHL, AddressMode::RegisterHL>, // $29: add hl, hl
+        &z80::ld<AddressMode::RegisterHL, AddressMode::Extended>, // $2A: ld hl, (nn)
+        &z80::decw<AddressMode::RegisterHL>, // $2B: dec hl
+        &z80::incb<AddressMode::RegisterL>, // $2C: inc l
+        &z80::decb<AddressMode::RegisterL>, // $2D: dec l
+        &z80::ld<AddressMode::RegisterL, AddressMode::Immediate>, // $2E: ld l, n
+        &z80::cpl, // $2F: cpl
+        &z80::jr<Condition::NC>, // $30: jr nc, d
+        &z80::ld<AddressMode::RegisterSP, AddressMode::ImmediateEx>, // $31 ld sp, nn
+        &z80::ld<AddressMode::Extended, AddressMode::Accumulator>, // $32: ld (nn), a
+        &z80::incw<AddressMode::RegisterSP>, // $33: inc sp
+        &z80::incb<AddressMode::RegisterIndirectHL>, // $34: inc (hl)
+        &z80::decb<AddressMode::RegisterIndirectHL>, // $35: dec (hl)
+        &z80::ld<AddressMode::RegisterIndirectHL, AddressMode::Immediate>, // $36: ld (hl), n
+        &z80::scf, // $37: scf
+        &z80::jr<Condition::C>, // $38: jr c, d
+        &z80::addw<AddressMode::RegisterHL, AddressMode::RegisterSp>, // $39: add hl, sp
+        &z80::ld<AddressMode::Accumulator, AddressMode::Extended>, // $3A: ld a, (nn)
+        &z80::decw<AddressMode::RegisterSP>, // $3B: dec sp
+        &z80::incb<AddressMode::Accumulator>, // $3C: inc a
+        &z80::decb<AddressMode::Accumulator>, // $3D: dec a
+        &z80::ld<AddressMode::Accumulator, AddressMode::Immediate>, // $3E: ld a, n
+        &z80::ccf, // $3F: ccf
+        &z80::ld<AddressMode::RegisterB, AddressMode::RegisterB>, // 40: ld b, b
+        &z80::ld<AddressMode::RegisterB, AddressMode::RegisterC>, // 41: ld b, c
+        &z80::ld<AddressMode::RegisterB, AddressMode::RegisterD>, // 42: ld b, d
+        &z80::ld<AddressMode::RegisterB, AddressMode::RegisterE>, // 43: ld b, e
+        &z80::ld<AddressMode::RegisterB, AddressMode::RegisterH>, // 44: ld b, h
+        &z80::ld<AddressMode::RegisterB, AddressMode::RegisterL>, // 45: ld b, l
+        &z80::ld<AddressMode::RegisterB, AddressMode::RegisterIndirectHL>, // 46: ld b, (hl)
+        &z80::ld<AddressMode::RegisterB, AddressMode::Accumulator>, // 47: ld c, a
+        &z80::ld<AddressMode::RegisterC, AddressMode::RegisterB>, // 48: ld c, b
+        &z80::ld<AddressMode::RegisterC, AddressMode::RegisterC>, // 49: ld c, c
+        &z80::ld<AddressMode::RegisterC, AddressMode::RegisterD>, // 4A: ld c, d
+        &z80::ld<AddressMode::RegisterC, AddressMode::RegisterE>, // 4B: ld c, e
+        &z80::ld<AddressMode::RegisterC, AddressMode::RegisterH>, // 4C: ld c, h
+        &z80::ld<AddressMode::RegisterC, AddressMode::RegisterL>, // 4D: ld c, l
+        &z80::ld<AddressMode::RegisterC, AddressMode::RegisterIndirectHL>, // 4E: ld c, (hl)
+        &z80::ld<AddressMode::RegisterC, AddressMode::Accumulator>, // 4F: ld c, a
+        &z80::ld<AddressMode::RegisterD, AddressMode::RegisterB>, // 50: ld d, b
+        &z80::ld<AddressMode::RegisterD, AddressMode::RegisterC>, // 51: ld d, c
+        &z80::ld<AddressMode::RegisterD, AddressMode::RegisterD>, // 52: ld d, d
+        &z80::ld<AddressMode::RegisterD, AddressMode::RegisterE>, // 53: ld d, e
+        &z80::ld<AddressMode::RegisterD, AddressMode::RegisterH>, // 54: ld d, h
+        &z80::ld<AddressMode::RegisterD, AddressMode::RegisterL>, // 55: ld d, l
+        &z80::ld<AddressMode::RegisterD, AddressMode::RegisterIndirectHL>, // 56: ld d, (hl)
+        &z80::ld<AddressMode::RegisterD, AddressMode::Accumulator>, // 57: ld d, a
+        &z80::ld<AddressMode::RegisterE, AddressMode::RegisterB>, // 58: ld e, b
+        &z80::ld<AddressMode::RegisterE, AddressMode::RegisterC>, // 59: ld e, c
+        &z80::ld<AddressMode::RegisterE, AddressMode::RegisterD>, // 5A: ld e, d
+        &z80::ld<AddressMode::RegisterE, AddressMode::RegisterE>, // 5B: ld e, e
+        &z80::ld<AddressMode::RegisterE, AddressMode::RegisterH>, // 5C: ld e, h
+        &z80::ld<AddressMode::RegisterE, AddressMode::RegisterL>, // 5D: ld e, l
+        &z80::ld<AddressMode::RegisterE, AddressMode::RegisterIndirectHL>, // 5E: ld e, (hl)
+        &z80::ld<AddressMode::RegisterE, AddressMode::Accumulator>, // 5F: ld e, a
+        &z80::ld<AddressMode::RegisterH, AddressMode::RegisterB>, // 60: ld h, b
+        &z80::ld<AddressMode::RegisterH, AddressMode::RegisterC>, // 61: ld h, c
+        &z80::ld<AddressMode::RegisterH, AddressMode::RegisterD>, // 62: ld h, d
+        &z80::ld<AddressMode::RegisterH, AddressMode::RegisterE>, // 63: ld h, e
+        &z80::ld<AddressMode::RegisterH, AddressMode::RegisterH>, // 64: ld h, h
+        &z80::ld<AddressMode::RegisterH, AddressMode::RegisterL>, // 65: ld h, l
+        &z80::ld<AddressMode::RegisterH, AddressMode::RegisterIndirectHL>, // 66: ld h, (hl)
+        &z80::ld<AddressMode::RegisterH, AddressMode::Accumulator>, // 67: ld h, a
+        &z80::ld<AddressMode::RegisterL, AddressMode::RegisterB>, // 68: ld l, b
+        &z80::ld<AddressMode::RegisterL, AddressMode::RegisterC>, // 69: ld l, c
+        &z80::ld<AddressMode::RegisterL, AddressMode::RegisterD>, // 6A: ld l, d
+        &z80::ld<AddressMode::RegisterL, AddressMode::RegisterE>, // 6B: ld l, e
+        &z80::ld<AddressMode::RegisterL, AddressMode::RegisterH>, // 6C: ld l, h
+        &z80::ld<AddressMode::RegisterL, AddressMode::RegisterL>, // 6D: ld l, l
+        &z80::ld<AddressMode::RegisterL, AddressMode::RegisterIndirectHL>, // 6E: ld l, (hl)
+        &z80::ld<AddressMode::RegisterL, AddressMode::Accumulator>, // 6F: ld l, a
     };
 
     static constexpr u8 cycles[256] {
@@ -366,33 +520,8 @@ private:
     };
     // end iy bit instructions
 
-    // internals
-    struct Registers {
-        u8 a {};
-        u8 b {};
-        u8 c {};
-        u8 d {};
-        u8 e {};
-        u8 h {};
-        u8 l {};
-    };
-
-    struct Flags {
-        u8 sf {};
-        u8 zf {};
-        u8 yf {};
-        u8 hf {};
-        u8 xf {};
-        u8 pf {};
-        u8 nf {};
-        u8 cf {};
-    };
-
-    Flags flags_ {}, flags2_ {};
-    Registers regs_ {}, regs2_ {};
-    u16 pc_ {}, sp_ {}, ix_ {}, iy_ {};
-    u8 i_ {}, r_ {};
-
+    Registers regs2_ {};
+    Flags flags2_ {};
     bool set_ {false}; // which register set is currently being worked with
     bool iff_ {false}; // interrupt latch
     int requested_ {};
