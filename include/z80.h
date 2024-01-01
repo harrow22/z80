@@ -236,11 +236,67 @@ private:
         const u16 augend {getOperand<mode2>()};
         const u32 sum {static_cast<u32>(addend + augend)};
         flags_.cf = sum > 0xFFFFU ? cf : 0;
-        flags_.hf = (addend ^ augend ^ sum) & 0x10U ? hf : 0;
+        flags_.hf = (addend ^ augend ^ sum) & 0x100U ? hf : 0;
         flags_.nf = 0;
         flags_.yf = sum & yf;
         flags_.xf = sum & xf;
         setOperand<mode1>(static_cast<u16>(sum));
+    }
+
+    template<AddressMode mode>
+    void addb()
+    {
+        const u8 augend {static_cast<u8>(getOperand<mode>())};
+        const u16 sum {static_cast<u16>(regs_.a + augend)};
+        flags_.cf = sum > 0xFFU ? cf : 0;
+        flags_.hf = (regs_.a ^ augend ^ sum) & 0x10U ? hf : 0;
+        flags_.pf = ((regs_.a ^ sum) & (augend ^ sum) & 0x80U) != 0 ? pf : 0;
+        flags_.nf = 0;
+        flags_.yf = sum & yf;
+        flags_.xf = sum & xf;
+        regs_.a = static_cast<u8>(sum);
+    }
+
+    template<AddressMode mode>
+    void adc()
+    {
+        const u8 augend {static_cast<u8>(getOperand<mode>())};
+        const u16 sum {static_cast<u16>(regs_.a + augend + flags_.cf)};
+        flags_.cf = sum > 0xFFU ? cf : 0;
+        flags_.hf = (regs_.a ^ augend ^ sum) & 0x10U ? hf : 0;
+        flags_.pf = ((regs_.a ^ sum) & (augend ^ sum) & 0x80U) != 0 ? pf : 0;
+        flags_.nf = 0;
+        flags_.yf = sum & yf;
+        flags_.xf = sum & xf;
+        regs_.a = static_cast<u8>(sum);
+    }
+
+    template<AddressMode mode>
+    void sub()
+    {
+        const u8 subtrahend {static_cast<u8>(getOperand<mode>())};
+        const u16 difference {static_cast<u16>(regs_.a - subtrahend)};
+        flags_.cf = difference < subtrahend ? cf : 0;
+        flags_.hf = ~(regs_.a ^ subtrahend ^ difference) & 0x10U ? hf : 0;
+        flags_.pf = ((difference ^ regs_.a) & (subtrahend ^ regs_.a) & 0x80U) != 0 ? pf : 0;
+        flags_.nf = 0;
+        flags_.yf = difference & yf;
+        flags_.xf = difference & xf;
+        regs_.a = static_cast<u8>(difference);
+    }
+
+    template<AddressMode mode>
+    void sbc()
+    {
+        const u8 subtrahend {static_cast<u8>(getOperand<mode>())};
+        const u16 difference {static_cast<u16>(regs_.a - subtrahend - flags_.cf)};
+        flags_.cf = difference < subtrahend + flags_.cf ? cf : 0;
+        flags_.hf = ~(regs_.a ^ subtrahend ^ difference) & 0x10U ? hf : 0;
+        flags_.pf = ((difference ^ regs_.a) & (subtrahend ^ regs_.a) & 0x80U) != 0 ? pf : 0;
+        flags_.nf = 0;
+        flags_.yf = difference & yf;
+        flags_.xf = difference & xf;
+        regs_.a = static_cast<u8>(difference);
     }
 
     void rrca()
@@ -322,6 +378,11 @@ private:
         flags_.cf = flags_.cf ? 0 : cf;
         flags_.hf = flags_.cf;
         flags_.nf = 0;
+    }
+
+    void halt()
+    {
+        // TODO: impelement this
     }
 
     // start main instructions
@@ -438,6 +499,39 @@ private:
         &z80::ld<AddressMode::RegisterL, AddressMode::RegisterL>, // 6D: ld l, l
         &z80::ld<AddressMode::RegisterL, AddressMode::RegisterIndirectHL>, // 6E: ld l, (hl)
         &z80::ld<AddressMode::RegisterL, AddressMode::Accumulator>, // 6F: ld l, a
+        &z80::ld<AddressMode::RegisterIndirectHL, AddressMode::RegisterB>, // $70: ld (hl), b
+        &z80::ld<AddressMode::RegisterIndirectHL, AddressMode::RegisterC>, // $71: ld (hl), c
+        &z80::ld<AddressMode::RegisterIndirectHL, AddressMode::RegisterD>, // $72: ld (hl), d
+        &z80::ld<AddressMode::RegisterIndirectHL, AddressMode::RegisterE>, // $73: ld (hl), e
+        &z80::ld<AddressMode::RegisterIndirectHL, AddressMode::RegisterH>, // $74: ld (hl), h
+        &z80::ld<AddressMode::RegisterIndirectHL, AddressMode::RegisterL>, // $75: ld (hl), l
+        &z80::halt, // $76: ld (hl), b
+        &z80::ld<AddressMode::RegisterIndirectHL, AddressMode::Accumulator>, // $77: ld (hl), a
+        &z80::ld<AddressMode::Accumulator, AddressMode::RegisterB>, // $78: ld a, b
+        &z80::ld<AddressMode::Accumulator, AddressMode::RegisterC>, // $79: ld a, c
+        &z80::ld<AddressMode::Accumulator, AddressMode::RegisterD>, // $7A: ld a, d
+        &z80::ld<AddressMode::Accumulator, AddressMode::RegisterE>, // $7B: ld a, e
+        &z80::ld<AddressMode::Accumulator, AddressMode::RegisterH>, // $7C: ld a, h
+        &z80::ld<AddressMode::Accumulator, AddressMode::RegisterL>, // $7D: ld a, l
+        &z80::ld<AddressMode::Accumulator, AddressMode::RegisterIndirectHL>, // $7E: ld a, (hl)
+        &z80::ld<AddressMode::Accumulator, AddressMode::Accumulator>, // $7F: ld a, a
+        &z80::addb<AddressMode::RegisterB>, // $80: add a, b
+        &z80::addb<AddressMode::RegisterC>, // $81: add a, c
+        &z80::addb<AddressMode::RegisterD>, // $82: add a, d
+        &z80::addb<AddressMode::RegisterE>, // $83: add a, e
+        &z80::addb<AddressMode::RegisterH>, // $84: add a, h
+        &z80::addb<AddressMode::RegisterL>, // $85: add a, l
+        &z80::addb<AddressMode::RegisterIndirectHL>, // $86: add a, (hl)
+        &z80::addb<AddressMode::Accumulator>, // $87: add a, a
+        &z80::adc<AddressMode::RegisterB>, // $88: adc a, b
+        &z80::adc<AddressMode::RegisterC>, // $89: adc a, c
+        &z80::adc<AddressMode::RegisterD>, // $8A: adc a, d
+        &z80::adc<AddressMode::RegisterE>, // $8B: adc a, e
+        &z80::adc<AddressMode::RegisterH>, // $8C: adc a, h
+        &z80::adc<AddressMode::RegisterL>, // $8D: adc a, l
+        &z80::adc<AddressMode::RegisterIndirectHL>, // $8E: adc a, (hl)
+        &z80::adc<AddressMode::Accumulator>, // $8F: adc a, a
+
     };
 
     static constexpr u8 cycles[256] {
