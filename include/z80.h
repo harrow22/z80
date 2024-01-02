@@ -552,43 +552,43 @@ private:
     void ei() { iff = true; }
 
     // Prefixes
-    void execBit()
+    void preBit()
     {
         const u8 opcode {fetch8()};
         (this->*bitInstruction[opcode])();
         requested -= bitCycles[opcode];
     }
 
-    void execIX()
+    void preIX()
     {
         u8 opcode {fetch8()};
         if (opcode == 0xCB) {
             opcode = fetch8();
-            (this->*ixBitInstruction[opcode])();
-            requested -= ixBitCycles[opcode];
+            (this->*indexBitInstruction<AddressMode::RegisterIX>[opcode])();
+            requested -= indexBitCycles[opcode];
         } else {
-            (this->*ixBitInstruction[opcode])();
-            requested -= ixCycles[opcode];
+            (this->*indexInstruction<AddressMode::RegisterIX>[opcode])();
+            requested -= indexCycles[opcode];
         }
     }
 
-    void execMisc()
+    void preMisc()
     {
         const u8 opcode {fetch8()};
         (this->*miscInstruction[opcode])();
         requested -= miscCycles[opcode];
     }
 
-    void execIY()
+    void preIY()
     {
         u8 opcode {fetch8()};
         if (opcode == 0xCB) {
             opcode = fetch8();
-            (this->*iyBitInstruction[opcode])();
-            requested -= iyBitCycles[opcode];
+            (this->*indexBitInstruction<AddressMode::RegisterIY>[opcode])();
+            requested -= indexBitCycles[opcode];
         } else {
-            (this->*iyInstruction[opcode])();
-            requested -= iyCycles[opcode];
+            (this->*indexInstruction<AddressMode::RegisterIY>[opcode])();
+            requested -= indexCycles[opcode];
         }
     }
 
@@ -797,7 +797,7 @@ private:
         &z80::ret<Condition::Z>, // $C8: ret z
         &z80::ret<Condition::Null>, // $C9: ret
         &z80::jp<Condition::Z, AddressMode::ImmediateEx>, // $CA: jp z, nn
-        &z80::execBit, // $CB: bit
+        &z80::preBit, // $CB: bit
         &z80::call<Condition::Z, AddressMode::ImmediateEx>, // $CC: call z, nn
         &z80::call<Condition::Null, AddressMode::ImmediateEx>, // $CD: call nn
         &z80::adc8<AddressMode::Immediate>, // $CE: adc a, n
@@ -815,7 +815,7 @@ private:
         &z80::jp<Condition::C, AddressMode::ImmediateEx>, // $DA: jp c, nn
         &z80::ina, // $DB: int a, (n)
         &z80::call<Condition::C, AddressMode::ImmediateEx>, // $DC: call c, nn
-        &z80::execIX, // $DD: IX
+        &z80::preIX, // $DD: IX
         &z80::sbc8<AddressMode::Immediate>, // $DE: sbc a, n
         &z80::rst<0x18U>, // $DF: rst 24
         &z80::ret<Condition::PO>, // $E0: ret po
@@ -831,7 +831,7 @@ private:
         &z80::jp<Condition::PE, AddressMode::ImmediateEx>, // $EA: jp pe, nn
         &z80::exde, // $EB: ex de, hl
         &z80::call<Condition::PE, AddressMode::ImmediateEx>, // $EC: call pe, nn
-        &z80::execMisc, // $ED: Misc.
+        &z80::preMisc, // $ED: Misc.
         &z80::lxor<AddressMode::Immediate>, // $EE: xor n
         &z80::rst<0x28U>, // $EF: rst 40
         &z80::ret<Condition::P>, // $F0: ret p
@@ -847,11 +847,34 @@ private:
         &z80::jp<Condition::M, AddressMode::ImmediateEx>, // $FA: jp m, nn
         &z80::ei, // $FB: ei
         &z80::call<Condition::M, AddressMode::ImmediateEx>, // $FC: call m, nn
-        &z80::execIY, // $FD: Misc.
+        &z80::preIY, // $FD: Misc.
         &z80::cp<AddressMode::Immediate>, // $FE: cp n
         &z80::rst<0x38U>, // $FF: rst 56
     };
 
+    // Bit Instructions ($CB)
+    static constexpr std::array<void (z80::*)(), 256> bitInstruction {
+
+    };
+
+    // Misc. Instructions ($ED)
+    static constexpr std::array<void (z80::*)(), 256> miscInstruction {
+
+    };
+
+    // Index Instructions ($DD/$FD)
+    template<AddressMode mode>
+    static constexpr std::array<void (z80::*)(), 256> indexInstruction {
+
+    };
+
+    // Index Bit instructions ($DDCB/$FDCB)
+    template<AddressMode mode>
+    static constexpr std::array<void (z80::*)(), 256> indexBitInstruction {
+
+    };
+
+    // Cycle Tables
     static constexpr u8 cycles[256] {
         4, 10, 7, 6, 4, 4, 7, 4, 4, 11, 7, 6, 4, 4, 7, 4,
         8, 10, 7, 6, 4, 4, 7, 4, 12, 11, 7, 6, 4, 4, 7, 4,
@@ -871,17 +894,7 @@ private:
         5, 10, 10, 4, 10, 11, 7, 11, 5, 6, 10, 4, 10, 0, 7, 11
     };
 
-    // Bit Instructions ($CB)
-    static constexpr std::array<void (z80::*)(), 256> bitInstruction {
-
-    };
-
     static constexpr u8 bitCycles[256] {
-
-    };
-
-    // Misc. Instructions ($ED)
-    static constexpr std::array<void (z80::*)(), 256> miscInstruction {
 
     };
 
@@ -889,39 +902,11 @@ private:
 
     };
 
-    // IX Instructions ($DD)
-    static constexpr std::array<void (z80::*)(), 256> ixInstruction {
+    static constexpr u8 indexCycles[256] {
 
     };
 
-    static constexpr u8 ixCycles[256] {
-
-    };
-
-    // IX Bit instructions ($DDCB)
-    static constexpr std::array<void (z80::*)(), 256> ixBitInstruction {
-
-    };
-
-    static constexpr u8 ixBitCycles[256] {
-
-    };
-
-    // IY Instructions ($FD)
-    static constexpr std::array<void (z80::*)(), 256> iyInstruction {
-
-    };
-
-    static constexpr u8 iyCycles[256] {
-
-    };
-
-    // IY Bit instructions ($FDCB)
-    static constexpr std::array<void (z80::*)(), 256> iyBitInstruction {
-
-    };
-
-    static constexpr u8 iyBitCycles[256] {
+    static constexpr u8 indexBitCycles[256] {
 
     };
 
