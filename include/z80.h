@@ -62,7 +62,7 @@ public:
 
     // internals
     struct Registers {
-        u8 a {}, b {}, c {}, d {}, e {}, h {}, l {};
+        u8 b {}, c {}, d {}, e {}, h {}, l {};
     };
     struct Flags {
         u8 sf {}, zf {}, yf {}, hf {}, xf {}, pf {}, nf {}, cf {};
@@ -71,7 +71,7 @@ public:
     Registers regs {};
     Flags flags {};
     u16 pc {}, sp {}, ix {}, iy {};
-    u8 i {}, r {};
+    u8 i {}, r {}, a {};
 private:
     static constexpr u8 sbit {0b10000000}; // bit 7: sign flag
     static constexpr u8 zbit {0b01000000}; // bit 6: zero flag
@@ -99,6 +99,7 @@ private:
         RegisterDE,
         RegisterHL,
         RegisterSP,
+        RegisterAF,
         RegisterIX,
         RegisterIY,
         RegisterIndirectBC,
@@ -115,7 +116,7 @@ private:
             case AddressMode::Extended: write(fetch16(), val); return;
             case AddressMode::IndexedIX: write(fetch8() + ix, val); return;
             case AddressMode::IndexedIY: write(fetch8() + iy, val); return;
-            case AddressMode::Accumulator: regs.a = val; return;
+            case AddressMode::Accumulator: a = val; return;
             case AddressMode::RegisterB: regs.b = val; return;
             case AddressMode::RegisterC: regs.c = val; return;
             case AddressMode::RegisterD: regs.d = val; return;
@@ -126,6 +127,18 @@ private:
             case AddressMode::RegisterDE: regs.d = val >> 8; regs.e = val & 0xFF; return;
             case AddressMode::RegisterHL: regs.h = val >> 8; regs.l = val & 0xFF; return;
             case AddressMode::RegisterSP: sp = val; return;
+            case AddressMode::RegisterAF: {
+                a = val >> 8U;
+                flags.sf = val & sbit;
+                flags.zf = val & zbit;
+                flags.yf = val & ybit;
+                flags.hf = val & hbit;
+                flags.xf = val & xbit;
+                flags.pf = val & pbit;
+                flags.nf = val & nbit;
+                flags.cf = val & cbit;
+                return;
+            }
             case AddressMode::RegisterIX: ix = val; return;
             case AddressMode::RegisterIY: iy = val; return;
             case AddressMode::RegisterIndirectBC: write(regs.b << 8 | regs.c, val); return;
@@ -144,7 +157,7 @@ private:
             case AddressMode::Extended: return read8(fetch16());
             case AddressMode::IndexedIX: return read8(fetch8() + ix);
             case AddressMode::IndexedIY: return read8(fetch8() + iy);
-            case AddressMode::Accumulator: return regs.a;
+            case AddressMode::Accumulator: return a;
             case AddressMode::RegisterB: return regs.b;
             case AddressMode::RegisterC: return regs.c;
             case AddressMode::RegisterD: return regs.d;
@@ -155,6 +168,7 @@ private:
             case AddressMode::RegisterDE: return regs.d << 8 | regs.e;
             case AddressMode::RegisterHL: return regs.h << 8 | regs.l;
             case AddressMode::RegisterSP: return sp;
+            case AddressMode::RegisterAF: return a << 8U | flag_();
             case AddressMode::RegisterIX: return ix;
             case AddressMode::RegisterIY: return iy;
             case AddressMode::RegisterIndirectBC: return read8(regs.b << 8 | regs.c);
@@ -201,11 +215,11 @@ private:
         flags.cf = 0;
         flags.nf = 0;
         flags.hf = 0;
-        flags.pf = std::popcount(regs.a) % 2 == 0 ? pbit : 0;
-        flags.sf = regs.a & sbit;
-        flags.zf = regs.a == 0 ? zbit : 0;
-        flags.yf = regs.a & ybit;
-        flags.xf = regs.a & xbit;
+        flags.pf = std::popcount(a) % 2 == 0 ? pbit : 0;
+        flags.sf = a & sbit;
+        flags.zf = a == 0 ? zbit : 0;
+        flags.yf = a & ybit;
+        flags.xf = a & xbit;
     }
     u16 top()
     {
@@ -231,9 +245,26 @@ private:
 
     void exaf()
     {
-        std::swap(regs.a, regs2.a);
+        std::swap(a, a2);
         std::swap(flags, flags2);
     }
+
+    template<AddressMode mode>
+    void exsp()
+    {
+        const u16 temp {getOperand<mode>()};
+        setOperand<mode>(read8(sp + 1) << 8U | read8(sp));
+        write(sp + 1, static_cast<u8>(temp >> 8U));
+        write(sp, static_cast<u8>(temp & 0xFF));
+    }
+
+    void exde()
+    {
+        std::swap(regs.d, regs.h);
+        std::swap(regs.e, regs.l);
+    }
+
+    void exx() { std::swap(regs, regs2); }
 
     // Black Transfer and Search
 
@@ -242,56 +273,56 @@ private:
     void add8()
     {
         const u8 augend {static_cast<u8>(getOperand<mode>())};
-        const u16 sum {static_cast<u16>(regs.a + augend)};
+        const u16 sum {static_cast<u16>(a + augend)};
         flags.cf = carry(sum) ? cbit : 0;
-        flags.hf = halfcy(regs.a, augend, sum) ? hbit : 0;
-        flags.pf = underflow(regs.a, augend, sum) ? pbit : 0;
+        flags.hf = halfcy(a, augend, sum) ? hbit : 0;
+        flags.pf = underflow(a, augend, sum) ? pbit : 0;
         flags.nf = 0;
         flags.yf = sum & ybit;
         flags.xf = sum & xbit;
-        regs.a = static_cast<u8>(sum);
+        a = static_cast<u8>(sum);
     }
 
     template<AddressMode mode>
     void adc8()
     {
         const u8 augend {static_cast<u8>(getOperand<mode>())};
-        const u16 sum {static_cast<u16>(regs.a + augend + flags.cf)};
+        const u16 sum {static_cast<u16>(a + augend + flags.cf)};
         flags.cf = carry(sum) ? cbit : 0;
-        flags.hf = halfcy(regs.a, augend, sum) ? hbit : 0;
-        flags.pf = underflow(regs.a, augend, sum) != 0 ? pbit : 0;
+        flags.hf = halfcy(a, augend, sum) ? hbit : 0;
+        flags.pf = underflow(a, augend, sum) != 0 ? pbit : 0;
         flags.nf = 0;
         flags.yf = sum & ybit;
         flags.xf = sum & xbit;
-        regs.a = static_cast<u8>(sum);
+        a = static_cast<u8>(sum);
     }
 
     template<AddressMode mode>
     void sub()
     {
         const u8 subtrahend {static_cast<u8>(getOperand<mode>())};
-        const u16 difference {static_cast<u16>(regs.a - subtrahend)};
-        flags.cf = borrow(regs.a, subtrahend) ? cbit : 0;
-        flags.hf = halfbw(regs.a, subtrahend, difference) ? hbit : 0;
-        flags.pf = overflow(regs.a, subtrahend, difference) ? pbit : 0;
+        const u16 difference {static_cast<u16>(a - subtrahend)};
+        flags.cf = borrow(a, subtrahend) ? cbit : 0;
+        flags.hf = halfbw(a, subtrahend, difference) ? hbit : 0;
+        flags.pf = overflow(a, subtrahend, difference) ? pbit : 0;
         flags.nf = 0;
         flags.yf = difference & ybit;
         flags.xf = difference & xbit;
-        regs.a = static_cast<u8>(difference);
+        a = static_cast<u8>(difference);
     }
 
     template<AddressMode mode>
     void sbc8()
     {
         const u8 subtrahend {static_cast<u8>(getOperand<mode>())};
-        const u16 difference {static_cast<u16>(regs.a - subtrahend - flags.cf)};
-        flags.cf = borrow(regs.a, subtrahend + flags.cf) ? cbit : 0;
-        flags.hf = halfbw(regs.a, subtrahend, difference) ? hbit : 0;
-        flags.pf = overflow(regs.a, subtrahend, difference) ? pbit : 0;
+        const u16 difference {static_cast<u16>(a - subtrahend - flags.cf)};
+        flags.cf = borrow(a, subtrahend + flags.cf) ? cbit : 0;
+        flags.hf = halfbw(a, subtrahend, difference) ? hbit : 0;
+        flags.pf = overflow(a, subtrahend, difference) ? pbit : 0;
         flags.nf = 0;
         flags.yf = difference & ybit;
         flags.xf = difference & xbit;
-        regs.a = static_cast<u8>(difference);
+        a = static_cast<u8>(difference);
     }
 
     template<AddressMode mode>
@@ -327,21 +358,21 @@ private:
     template<AddressMode mode>
     void land()
     {
-        regs.a &= getOperand<mode>();
+        a &= getOperand<mode>();
         lflags();
     }
 
     template<AddressMode mode>
     void lxor()
     {
-        regs.a ^= getOperand<mode>();
+        a ^= getOperand<mode>();
         lflags();
     }
 
     template<AddressMode mode>
     void lor()
     {
-        regs.a |= getOperand<mode>();
+        a |= getOperand<mode>();
         lflags();
     }
 
@@ -349,10 +380,10 @@ private:
     void cp()
     {
         const u8 subtrahend {static_cast<u8>(getOperand<mode>())};
-        const u16 difference {static_cast<u16>(regs.a - subtrahend)};
-        flags.cf = borrow(regs.a, subtrahend) ? cbit : 0;
-        flags.hf = halfbw(regs.a, subtrahend, difference) ? hbit : 0;
-        flags.pf = overflow(regs.a, subtrahend, difference) ? pbit : 0;
+        const u16 difference {static_cast<u16>(a - subtrahend)};
+        flags.cf = borrow(a, subtrahend) ? cbit : 0;
+        flags.hf = halfbw(a, subtrahend, difference) ? hbit : 0;
+        flags.pf = overflow(a, subtrahend, difference) ? pbit : 0;
         flags.nf = 0;
         flags.yf = subtrahend & ybit;
         flags.xf = subtrahend & xbit;
@@ -380,7 +411,7 @@ private:
 
     void cpl()
     {
-        regs.a = ~regs.a;
+        a = ~a;
         flags.nf = nbit;
         flags.hf = hbit;
     }
@@ -404,64 +435,64 @@ private:
         u8 correction = 0;
         flags.cf = 0;
 
-        if (flags.hf or (!flags.nf and (regs.a & 0xF) > 9)) {
+        if (flags.hf or (!flags.nf and (a & 0xF) > 9)) {
             correction |= 0x6;
         }
 
-        if (flags.cf or (!flags.nf and (regs.a & 0xF0) > 0x99)) {
+        if (flags.cf or (!flags.nf and (a & 0xF0) > 0x99)) {
             correction |= 0x60;
             flags.cf = cbit;
         }
 
-        regs.a += flags.nf ? -correction : correction;
-        flags.pf = std::popcount(regs.a) % 2 == 0 ? pbit : 0;
-        flags.sf = regs.a & sbit;
-        flags.zf = regs.a == 0 ? zbit : 0;
-        flags.yf = regs.a & ybit;
-        flags.xf = regs.a & xbit;
+        a += flags.nf ? -correction : correction;
+        flags.pf = std::popcount(a) % 2 == 0 ? pbit : 0;
+        flags.sf = a & sbit;
+        flags.zf = a == 0 ? zbit : 0;
+        flags.yf = a & ybit;
+        flags.xf = a & xbit;
     }
 
     // Rotate and Shift
     void rlca()
     {
-        flags.cf = regs.a & 0x80U ? cbit : 0;
-        regs.a <<= 7U | flags.cf;
+        flags.cf = a & 0x80U ? cbit : 0;
+        a <<= 7U | flags.cf;
         flags.hf = 0;
         flags.nf = 0;
-        flags.yf = regs.a & ybit;
-        flags.xf = regs.a & xbit;
+        flags.yf = a & ybit;
+        flags.xf = a & xbit;
     }
 
     void rrca()
     {
-        flags.cf = regs.a & 0x01U ? cbit : 0;
-        regs.a >>= 1U | flags.cf << 7U;
+        flags.cf = a & 0x01U ? cbit : 0;
+        a >>= 1U | flags.cf << 7U;
         flags.hf = 0;
         flags.nf = 0;
-        flags.yf = regs.a & ybit;
-        flags.xf = regs.a & xbit;
+        flags.yf = a & ybit;
+        flags.xf = a & xbit;
     }
 
     void rla()
     {
         const u8 temp {flags.cf};
-        flags.cf = regs.a & 0x80U ? cbit : 0;
-        regs.a <<= 7U | temp;
+        flags.cf = a & 0x80U ? cbit : 0;
+        a <<= 7U | temp;
         flags.hf = 0;
         flags.nf = 0;
-        flags.yf = regs.a & ybit;
-        flags.xf = regs.a & xbit;
+        flags.yf = a & ybit;
+        flags.xf = a & xbit;
     }
 
     void rra()
     {
         const u8 temp {flags.cf};
-        flags.cf = regs.a & 0x01U ? cbit : 0;
-        regs.a >>= 1U | temp << 7U;
+        flags.cf = a & 0x01U ? cbit : 0;
+        a >>= 1U | temp << 7U;
         flags.hf = 0;
         flags.nf = 0;
-        flags.yf = regs.a & ybit;
-        flags.xf = regs.a & xbit;
+        flags.yf = a & ybit;
+        flags.xf = a & xbit;
     }
 
     // Bit Manipulation
@@ -510,10 +541,15 @@ private:
     }
 
     // Input/Output
+    void ina() { a = read8(a << 8U | fetch8()); }
+
+    void outa() { write(a << 8U | fetch8(), a); }
 
     // CPU Control Group
     void nop() { }
     void halt() { } // TODO: implement this
+    void di() { iff = false; }
+    void ei() { iff = true; }
 
     // Prefixes
     void execBit()
@@ -766,11 +802,10 @@ private:
         &z80::call<Condition::Null, AddressMode::ImmediateEx>, // $CD: call nn
         &z80::adc8<AddressMode::Immediate>, // $CE: adc a, n
         &z80::rst<0x08U>, // $CF: rst 8
-
         &z80::ret<Condition::NC>, // $D0: ret nc
         &z80::pop<AddressMode::RegisterDE>, // $D1: pop de
         &z80::jp<Condition::NC, AddressMode::ImmediateEx>, // $D2: jp nc, nn
-        &z80::out<AddressMode::Immediate, AddressMode::Accumulator>, // $D3: out (n), a
+        &z80::outa, // $D3: out (n), a
         &z80::call<Condition::NC, AddressMode::ImmediateEx>, // $D4: call nc, nn
         &z80::push<AddressMode::RegisterDE>, // $D5: push de
         &z80::sub<AddressMode::Immediate>, // $D6: sub n
@@ -778,11 +813,43 @@ private:
         &z80::ret<Condition::C>, // $D8: ret c
         &z80::exx, // $D9: exx
         &z80::jp<Condition::C, AddressMode::ImmediateEx>, // $DA: jp c, nn
-        &z80::in<AddressMode::Accumulator, AddressMode::Immediate>, // $DB: int a, (n)
+        &z80::ina, // $DB: int a, (n)
         &z80::call<Condition::C, AddressMode::ImmediateEx>, // $DC: call c, nn
         &z80::execIX, // $DD: IX
         &z80::sbc8<AddressMode::Immediate>, // $DE: sbc a, n
         &z80::rst<0x18U>, // $DF: rst 24
+        &z80::ret<Condition::PO>, // $E0: ret po
+        &z80::pop<AddressMode::RegisterHL>, // $E1: pop hl
+        &z80::jp<Condition::PO, AddressMode::ImmediateEx>, // $E2: jp po, nn
+        &z80::exsp<AddressMode::RegisterHL>, // $E3: ex (sp), hl
+        &z80::call<Condition::PO, AddressMode::ImmediateEx>, // $E4: call po, nn
+        &z80::push<AddressMode::RegisterHL>, // $E5: push hl
+        &z80::add8<AddressMode::Immediate>, // $E6: add n
+        &z80::rst<0x20U>, // $E7: rst 32
+        &z80::ret<Condition::PE>, // $E8: ret pe
+        &z80::jp<Condition::Null, AddressMode::RegisterIndirectHL>, // $E9: jp (hl)
+        &z80::jp<Condition::PE, AddressMode::ImmediateEx>, // $EA: jp pe, nn
+        &z80::exde, // $EB: ex de, hl
+        &z80::call<Condition::PE, AddressMode::ImmediateEx>, // $EC: call pe, nn
+        &z80::execMisc, // $ED: Misc.
+        &z80::lxor<AddressMode::Immediate>, // $EE: xor n
+        &z80::rst<0x28U>, // $EF: rst 40
+        &z80::ret<Condition::P>, // $F0: ret p
+        &z80::pop<AddressMode::RegisterAF>, // $F1: pop af
+        &z80::jp<Condition::P, AddressMode::ImmediateEx>, // $F2: jp p, nn
+        &z80::di, // $F3: di
+        &z80::call<Condition::P, AddressMode::ImmediateEx>, // $F4: call p, nn
+        &z80::push<AddressMode::RegisterAF>, // $F5: push af
+        &z80::lor<AddressMode::Immediate>, // $F6: or n
+        &z80::rst<0x30U>, // $F7: rst 48
+        &z80::ret<Condition::M>, // $F8: ret m
+        &z80::ld<AddressMode::RegisterSP, AddressMode::RegisterHL>, // $F9: ld sp, hl
+        &z80::jp<Condition::M, AddressMode::ImmediateEx>, // $FA: jp m, nn
+        &z80::ei, // $FB: ei
+        &z80::call<Condition::M, AddressMode::ImmediateEx>, // $FC: call m, nn
+        &z80::execIY, // $FD: Misc.
+        &z80::cp<AddressMode::Immediate>, // $FE: cp n
+        &z80::rst<0x38U>, // $FF: rst 56
     };
 
     static constexpr u8 cycles[256] {
@@ -860,6 +927,7 @@ private:
 
     bool iff {false}; // interrupt latch
     int requested {};
+    u8 a2 {};
     Registers regs2 {};
     Flags flags2 {};
     Memory memory {};
