@@ -227,6 +227,11 @@ private:
         top |= read8(sp++) << 8U;
         return top;
     }
+    void pushpc()
+    {
+        write(sp--, static_cast<u8>(++pc >> 8U));
+        write(sp--, static_cast<u8>(pc & 0xFFU));
+    }
 
     // Load and Exchange
     template<AddressMode mode1, AddressMode mode2>
@@ -236,12 +241,12 @@ private:
     void push()
     {
         const u16 operand {getOperand<mode>()};
-        write(sp--, operand >> 8U);
-        write(sp--, operand & 0xFFU);
+        write(sp--, static_cast<u8>(operand >> 8U));
+        write(sp--, static_cast<u8>(operand & 0xFFU));
     }
 
     template<AddressMode mode>
-    void pop() { setOperand<mode>(top); }
+    void pop() { setOperand<mode>(top()); }
 
     void exaf()
     {
@@ -502,7 +507,7 @@ private:
     void jr()
     {
         if (getCondition<cond>()) {
-            const s8 val {read8(pc)};
+            const s8 val {static_cast<s8>(read8(pc))};
             pc += val;
         }
     }
@@ -515,8 +520,7 @@ private:
     {
         if (getCondition<cond>()) {
             const u16 operand {getOperand<mode>()};
-            write(sp--, ++pc >> 8U);
-            write(sp--, pc & 0xFFU);
+            pushpc();
             pc = operand;
         }
     }
@@ -535,8 +539,7 @@ private:
     template<u8 p>
     void rst()
     {
-        write(sp--, ++pc >> 8U);
-        write(sp--, pc & 0xFFU);
+        pushpc();
         pc = p;
     }
 
@@ -640,7 +643,7 @@ private:
         &z80::ld<AddressMode::RegisterIndirectHL, AddressMode::Immediate>, // $36: ld (hl), n
         &z80::scf, // $37: scf
         &z80::jr<Condition::C>, // $38: jr c, d
-        &z80::add16<AddressMode::RegisterHL, AddressMode::RegisterSp>, // $39: add hl, sp
+        &z80::add16<AddressMode::RegisterHL, AddressMode::RegisterSP>, // $39: add hl, sp
         &z80::ld<AddressMode::Accumulator, AddressMode::Extended>, // $3A: ld a, (nn)
         &z80::dec16<AddressMode::RegisterSP>, // $3B: dec sp
         &z80::inc8<AddressMode::Accumulator>, // $3C: inc a
