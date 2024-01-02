@@ -35,9 +35,9 @@ TEST_F(z80Test, jsmooUnitTests)
         compare final processor state to test and report any errors;
      */
 
-    z80_.regs_.b = 0x7F;
+    z80_.regs.b = 0x7F;
     z80_.run(4);
-    EXPECT_EQ(z80_.flags_.pf, 0b100);
+    EXPECT_EQ(z80_.flags.pf, 0b100);
 }
 
 TEST_F(z80Test, prelim)
