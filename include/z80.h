@@ -106,7 +106,7 @@ private:
         RegisterIndirectHL,
         RegisterIndirectSP,
     };
-    enum class Condition { Null, C, NC, Z, NZ };
+    enum class Condition { Null, C, NC, Z, NZ, PO, PE, P, M };
 
     template<AddressMode mode>
     void setOperand(u16 val)
@@ -168,10 +168,14 @@ private:
     bool getCondition()
     {
         switch (cond) {
-            case Condition::C: return flags.cf != 0;
+            case Condition::C: return flags.cf == cbit;
             case Condition::NC: return flags.cf == 0;
-            case Condition::Z: return flags.zf != 0;
+            case Condition::Z: return flags.zf == zbit;
             case Condition::NZ: return flags.zf == 0;
+            case Condition::PO: return flags.pf == 0;
+            case Condition::PE: return flags.pf == pbit;
+            case Condition::P: return flags.sf == 0;
+            case Condition::M: return flags.sf == sbit;
             case Condition::Null: return true;
         }
     }
@@ -203,10 +207,27 @@ private:
         flags.yf = regs.a & ybit;
         flags.xf = regs.a & xbit;
     }
+    u16 top()
+    {
+        u16 top {read8(sp++)};
+        top |= read8(sp++) << 8U;
+        return top;
+    }
 
     // Load and Exchange
     template<AddressMode mode1, AddressMode mode2>
     void ld() { setOperand<mode1>(getOperand<mode2>()); }
+
+    template<AddressMode mode>
+    void push()
+    {
+        const u16 operand {getOperand<mode>()};
+        write(sp--, operand >> 8U);
+        write(sp--, operand & 0xFFU);
+    }
+
+    template<AddressMode mode>
+    void pop() { setOperand<mode>(top); }
 
     void exaf()
     {
@@ -446,6 +467,29 @@ private:
     // Bit Manipulation
 
     // Jump, Call, and Return
+    template<Condition cond>
+    void jr()
+    {
+        if (getCondition<cond>()) {
+            const s8 val {read8(pc)};
+            pc += val;
+        }
+    }
+
+    template<Condition cond, AddressMode mode>
+    void jp() { if (getCondition<cond>()) pc = getOperand<mode>(); }
+
+    template<Condition cond, AddressMode mode>
+    void call()
+    {
+        if (getCondition<cond>()) {
+            const u16 operand {getOperand<mode>()};
+            write(sp--, ++pc >> 8U);
+            write(sp--, pc & 0xFFU);
+            pc = operand;
+        }
+    }
+
     void djnz()
     {
         if (--regs.b != 0 ) {
@@ -455,12 +499,14 @@ private:
     }
 
     template<Condition cond>
-    void jr()
+    void ret() { if (getCondition<cond>()) pc = top(); }
+
+    template<u8 p>
+    void rst()
     {
-        if (getCondition<cond>()) {
-            const s8 val {static_cast<s8>(read8(pc))};
-            pc += val;
-        }
+        write(sp--, ++pc >> 8U);
+        write(sp--, pc & 0xFFU);
+        pc = p;
     }
 
     // Input/Output
@@ -468,6 +514,47 @@ private:
     // CPU Control Group
     void nop() { }
     void halt() { } // TODO: implement this
+
+    // Prefixes
+    void execBit()
+    {
+        const u8 opcode {fetch8()};
+        (this->*bitInstruction[opcode])();
+        requested -= bitCycles[opcode];
+    }
+
+    void execIX()
+    {
+        u8 opcode {fetch8()};
+        if (opcode == 0xCB) {
+            opcode = fetch8();
+            (this->*ixBitInstruction[opcode])();
+            requested -= ixBitCycles[opcode];
+        } else {
+            (this->*ixBitInstruction[opcode])();
+            requested -= ixCycles[opcode];
+        }
+    }
+
+    void execMisc()
+    {
+        const u8 opcode {fetch8()};
+        (this->*miscInstruction[opcode])();
+        requested -= miscCycles[opcode];
+    }
+
+    void execIY()
+    {
+        u8 opcode {fetch8()};
+        if (opcode == 0xCB) {
+            opcode = fetch8();
+            (this->*iyBitInstruction[opcode])();
+            requested -= iyBitCycles[opcode];
+        } else {
+            (this->*iyInstruction[opcode])();
+            requested -= iyCycles[opcode];
+        }
+    }
 
     // Main Instructions
     static constexpr std::array<void (z80::*)(), 256> instruction {
@@ -663,6 +750,39 @@ private:
         &z80::cp<AddressMode::RegisterL>, // $BD: cp l
         &z80::cp<AddressMode::RegisterIndirectHL>, // $BE: cp (hl)
         &z80::cp<AddressMode::Accumulator>, // $BF: cp a
+        &z80::ret<Condition::NZ>, // $C0: ret nz
+        &z80::pop<AddressMode::RegisterBC>, // $C1: pop bc
+        &z80::jp<Condition::NZ, AddressMode::ImmediateEx>, // $C2: jp nz, nn
+        &z80::jp<Condition::Null, AddressMode::ImmediateEx>, // $C3: jp nn
+        &z80::call<Condition::NZ, AddressMode::ImmediateEx>, // $C4: call nz, nn
+        &z80::push<AddressMode::RegisterBC>, // $C5: push bc
+        &z80::add8<AddressMode::Immediate>, // $C6: add a, n
+        &z80::rst<0x00U>, // $C7: rst 0
+        &z80::ret<Condition::Z>, // $C8: ret z
+        &z80::ret<Condition::Null>, // $C9: ret
+        &z80::jp<Condition::Z, AddressMode::ImmediateEx>, // $CA: jp z, nn
+        &z80::execBit, // $CB: bit
+        &z80::call<Condition::Z, AddressMode::ImmediateEx>, // $CC: call z, nn
+        &z80::call<Condition::Null, AddressMode::ImmediateEx>, // $CD: call nn
+        &z80::adc8<AddressMode::Immediate>, // $CE: adc a, n
+        &z80::rst<0x08U>, // $CF: rst 8
+
+        &z80::ret<Condition::NC>, // $D0: ret nc
+        &z80::pop<AddressMode::RegisterDE>, // $D1: pop de
+        &z80::jp<Condition::NC, AddressMode::ImmediateEx>, // $D2: jp nc, nn
+        &z80::out<AddressMode::Immediate, AddressMode::Accumulator>, // $D3: out (n), a
+        &z80::call<Condition::NC, AddressMode::ImmediateEx>, // $D4: call nc, nn
+        &z80::push<AddressMode::RegisterDE>, // $D5: push de
+        &z80::sub<AddressMode::Immediate>, // $D6: sub n
+        &z80::rst<0x10U>, // $D7: rst 16
+        &z80::ret<Condition::C>, // $D8: ret c
+        &z80::exx, // $D9: exx
+        &z80::jp<Condition::C, AddressMode::ImmediateEx>, // $DA: jp c, nn
+        &z80::in<AddressMode::Accumulator, AddressMode::Immediate>, // $DB: int a, (n)
+        &z80::call<Condition::C, AddressMode::ImmediateEx>, // $DC: call c, nn
+        &z80::execIX, // $DD: IX
+        &z80::sbc8<AddressMode::Immediate>, // $DE: sbc a, n
+        &z80::rst<0x18U>, // $DF: rst 24
     };
 
     static constexpr u8 cycles[256] {
@@ -757,39 +877,8 @@ template<typename Memory>
 void z80<Memory>::tick()
 {
     u8 opcode {fetch8()};
-
-    if (opcode == 0xCB) {
-        opcode = fetch8();
-        (this->*bitInstruction[opcode])();
-        requested -= bitCycles[opcode];
-    } else if (opcode == 0xED) {
-        opcode = fetch8();
-        (this->*miscInstruction[opcode])();
-        requested -= miscCycles[opcode];
-    } else if (opcode == 0xDD) {
-        opcode = fetch8();
-        if (opcode == 0xCB) {
-            opcode = fetch8();
-            (this->*ixBitInstruction[opcode])();
-            requested -= ixBitCycles[opcode];
-        } else {
-            (this->*ixBitInstruction[opcode])();
-            requested -= ixCycles[opcode];
-        }
-    } else if (opcode == 0xFD) {
-        opcode = fetch8();
-        if (opcode == 0xCB) {
-            opcode = fetch8();
-            (this->*iyBitInstruction[opcode])();
-            requested -= iyBitCycles[opcode];
-        } else {
-            (this->*iyInstruction[opcode])();
-            requested -= iyCycles[opcode];
-        }
-    } else {
-        (this->*instruction[opcode])();
-        requested -= cycles[opcode];
-    }
+    (this->*instruction[opcode])();
+    requested -= cycles[opcode];
 }
 
 #endif //Z80_LIBRARY_H
