@@ -266,7 +266,7 @@ private:
 
     void exx() { std::swap(regs, regs2); }
 
-    // Black Transfer and Search
+    // Block Transfer and Search
 
     // Arithmetic and Logical
     template<AddressMode mode>
@@ -542,7 +542,6 @@ private:
 
     // Input/Output
     void ina() { a = read8(a << 8U | fetch8()); }
-
     void outa() { write(a << 8U | fetch8(), a); }
 
     // CPU Control Group
@@ -552,26 +551,6 @@ private:
     void ei() { iff = true; }
 
     // Prefixes
-    void preBit()
-    {
-        const u8 opcode {fetch8()};
-        (this->*bitInstruction[opcode])();
-        requested -= bitCycles[opcode];
-    }
-
-    void preIX()
-    {
-        u8 opcode {fetch8()};
-        if (opcode == 0xCB) {
-            opcode = fetch8();
-            (this->*indexBitInstruction<AddressMode::RegisterIX>[opcode])();
-            requested -= indexBitCycles[opcode];
-        } else {
-            (this->*indexInstruction<AddressMode::RegisterIX>[opcode])();
-            requested -= indexCycles[opcode];
-        }
-    }
-
     void preMisc()
     {
         const u8 opcode {fetch8()};
@@ -579,17 +558,27 @@ private:
         requested -= miscCycles[opcode];
     }
 
-    void preIY()
+    void preBit()
     {
-        u8 opcode {fetch8()};
-        if (opcode == 0xCB) {
-            opcode = fetch8();
-            (this->*indexBitInstruction<AddressMode::RegisterIY>[opcode])();
-            requested -= indexBitCycles[opcode];
-        } else {
-            (this->*indexInstruction<AddressMode::RegisterIY>[opcode])();
-            requested -= indexCycles[opcode];
-        }
+        const u8 opcode {fetch8()};
+        (this->*bitInstruction[opcode])();
+        requested -= bitCycles[opcode];
+    }
+
+    template<AddressMode mode>
+    void preIndex()
+    {
+        const u8 opcode {fetch8()};
+        (this->*indexInstruction<mode>[opcode])();
+        requested -= indexCycles[opcode];
+    }
+
+    template<AddressMode mode>
+    void preIndexBit()
+    {
+        const u8 opcode {fetch8()};
+        (this->*indexBitInstruction<mode>[opcode])();
+        requested -= indexBitCycles[opcode];
     }
 
     // Main Instructions
@@ -815,7 +804,7 @@ private:
         &z80::jp<Condition::C, AddressMode::ImmediateEx>, // $DA: jp c, nn
         &z80::ina, // $DB: int a, (n)
         &z80::call<Condition::C, AddressMode::ImmediateEx>, // $DC: call c, nn
-        &z80::preIX, // $DD: IX
+        &z80::preIndex<AddressMode::RegisterIX>, // $DD: IX
         &z80::sbc8<AddressMode::Immediate>, // $DE: sbc a, n
         &z80::rst<0x18U>, // $DF: rst 24
         &z80::ret<Condition::PO>, // $E0: ret po
@@ -847,18 +836,18 @@ private:
         &z80::jp<Condition::M, AddressMode::ImmediateEx>, // $FA: jp m, nn
         &z80::ei, // $FB: ei
         &z80::call<Condition::M, AddressMode::ImmediateEx>, // $FC: call m, nn
-        &z80::preIY, // $FD: Misc.
+        &z80::preIndex<AddressMode::RegisterIY>, // $FD: IY
         &z80::cp<AddressMode::Immediate>, // $FE: cp n
-        &z80::rst<0x38U>, // $FF: rst 56
-    };
-
-    // Bit Instructions ($CB)
-    static constexpr std::array<void (z80::*)(), 256> bitInstruction {
-
+        &z80::rst<0x38U>,// $FF: rst 56
     };
 
     // Misc. Instructions ($ED)
     static constexpr std::array<void (z80::*)(), 256> miscInstruction {
+
+    };
+
+    // Bit Instructions ($CB)
+    static constexpr std::array<void (z80::*)(), 256> bitInstruction {
 
     };
 
