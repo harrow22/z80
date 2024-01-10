@@ -25,7 +25,21 @@ public:
      * \return
      */
     int run(int cycles);
-    void interrupt();
+
+    /**
+     * \brief
+     */
+    void reset();
+
+    /**
+     * \brief
+     */
+    void reqNmi();
+
+    /**
+     * \brief
+     */
+    void reqInt(const u8);
 
     /**
      * \brief
@@ -429,6 +443,17 @@ private:
     // Load and Exchange
     template<AddressMode mode1, AddressMode mode2>
     void ld() { setOperand<mode1>(getOperand<mode2>()); }
+
+    template<AddressMode mode>
+    void lda()
+    {
+
+        a = getOperand<mode>();
+        flags.hf = 0;
+        flags.nf = 0;
+        flags.pf = iff2;
+        commonFlags(a);
+    }
 
     template<AddressMode mode>
     void push()
@@ -1018,9 +1043,9 @@ private:
 
     // CPU Control Group
     void nop() { }
-    void halt() { } // TODO: implement this
-    void di() { iff1 = false; }
-    void ei() { iff1 = true; }
+    void halt() { halted = true; }
+    void di() { iff1 = iff2 = false; }
+    void ei() { iff1 = iff2 = true; }
     template<u8 n>
     void im() { imode = n; }
 
@@ -1343,14 +1368,14 @@ private:
         &z80::ld<AddressMode::ImmediateEx, AddressMode::RegisterDE>, // $53: ld (nn), de
         &z80::nop, &z80::nop,
         &z80::im<1U>, // $56: im 1
-        &z80::ld<AddressMode::Accumulator, AddressMode::Interrupt>, // $57: ld a, i
+        &z80::lda<AddressMode::Interrupt>, // $57: ld a, i
         &z80::in<AddressMode::RegisterE>, // $58: in e, (c)
         &z80::out<AddressMode::RegisterE>, // $59: out (c), e
         &z80::adc16<AddressMode::RegisterHL, AddressMode::RegisterDE>, // $5A: adc hl, de
         &z80::ld<AddressMode::RegisterDE, AddressMode::Extended>, // $5B: ld de, (nn)
         &z80::nop, &z80::nop,
         &z80::im<2U>, // // $4E: im 2
-        &z80::ld<AddressMode::Accumulator, AddressMode::Refresh>, // $4F: ld a, r
+        &z80::lda<AddressMode::Refresh>, // $4F: ld a, r
         &z80::in<AddressMode::RegisterH>, // $60: in h, (c)
         &z80::out<AddressMode::RegisterH>, // $61: out (c), h
         &z80::sbc16<AddressMode::RegisterHL, AddressMode::RegisterHL>, // $62: sbc hl, hl
@@ -2117,7 +2142,9 @@ private:
     };
 
     bool iff1 {false}, iff2 {false}; // interrupt latch
-    u8 imode {}; // interrupt mode
+    bool nmiRequested {false}, intRequested {false};
+    u8 imode {0}; // interrupt mode
+    u8 ivector {0}; // interrupt vector
     bool halted {false};
     int requested {};
     u8 a2 {};
@@ -2131,8 +2158,63 @@ template<typename Memory, typename IO>
 int z80<Memory, IO>::run(const int cycles)
 {
     requested = cycles;
-    while (requested > 0) { tick(); }
+    while (requested > 0) {
+        // increment refresh register
+        r = (r & 0x80U) | (r + 1U & ~0x80U);
+
+        // handle non maskable interrupts
+        if (nmiRequested) {
+            iff2 = iff1;
+            iff1 = halted = nmiRequested = false;
+            rst<0x66>();
+            requested -= 11;
+            continue;
+        }
+
+        // handle maskable interrupts
+        if (intRequested & iff1) {
+            iff1 = iff2 = halted = intRequested = false;
+            pushpc();
+
+            if (imode == 0) {
+                pc = ivector;
+                requested -= 11;
+            } else if (imode == 1) {
+                pc = 0x38;
+                requested -= 13;
+            } else if (imode == 2) {
+                pc = (i << 8U) | (ivector & 0xFE);
+                requested -= 19;
+            }
+
+            continue;
+        }
+
+        // else execute an instruction
+        if (!halted)
+            tick();
+    }
     return requested;
+}
+
+template<typename Memory, typename IO>
+void z80<Memory, IO>::reset()
+{
+    pc = i = r = imode = ivector = 0;
+    iff1 = iff2 = halted = false;
+}
+
+template<typename Memory, typename IO>
+void z80<Memory, IO>::reqNmi()
+{
+    nmiRequested = true;
+}
+
+template<typename Memory, typename IO>
+void z80<Memory, IO>::reqInt(const u8 vector)
+{
+    intRequested = true;
+    ivector = vector;
 }
 
 template<typename Memory, typename IO>
