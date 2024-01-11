@@ -16,7 +16,7 @@ using s8 = std::int8_t;
  * \tparam Memory
  * \tparam IO
  */
-template<typename Memory, typename IO>
+template<typename Memory>
 class z80 {
 public:
     /**
@@ -25,6 +25,11 @@ public:
      * \return
      */
     int run(int cycles);
+
+    /**
+     * \brief
+     */
+    void step();
 
     /**
      * \brief
@@ -39,7 +44,7 @@ public:
     /**
      * \brief
      */
-    void reqInt(const u8);
+    void reqInt(u8);
 
     /**
      * \brief
@@ -74,33 +79,43 @@ public:
      * \param addr
      * \return
      */
-    u8 input(u8 addr) { return io.input(addr); }
+    u8 input(u8 addr) { return memory.input(this, addr); }
 
     /**
      * \brief
      * \param addr
      * \param val
      */
-    void output(u8 addr, u8 val) { io.output(addr, val); }
+    void output(u8 addr, u8 val) { memory.output(this, addr, val); }
 
     /**
      * \brief Flags are stored separetly, to get them as a single status byte they must be or'd together.
      * \return The flag register as a single byte.
      */
-    [[nodiscard]] u8 flag_() const { return flags.sf | flags.zf | flags.yf | flags.hf | flags.xf | flags.pf | flags.nf | flags.cf; }
+    [[nodiscard]] u8 flag() const { return flags.sf | flags.zf | flags.yf | flags.hf | flags.xf | flags.pf | flags.nf | flags.cf; }
+
+    /**
+     * \brief
+     * \param hi
+     * \param lo
+     * \return
+     */
+    [[nodiscard]] static u16 pair(const u8 hi, const u8 lo) { return hi << 8U | lo; }
 
     // internals
     struct Registers {
         u8 b {}, c {}, d {}, e {}, h {}, l {};
     };
     struct Flags {
-        u8 sf {}, zf {}, yf {}, hf {}, xf {}, pf {}, nf {}, cf {};
+        u8 sf {sbit}, zf {zbit}, yf {ybit}, hf {hbit}, xf {xbit}, pf {pbit}, nf {nbit}, cf {cbit};
     };
 
     Registers regs {};
     Flags flags {};
-    u16 pc {}, sp {}, ix {}, iy {};
-    u8 i {}, r {}, a {};
+    Memory memory {};
+    int requested {}; // holds the number of requested cycles, stepping the cpu subtracts from this number
+    u16 pc {}, sp {0xFFFF}, ix {}, iy {};
+    u8 i {}, r {}, a {0xFF};
 private:
     static constexpr u8 sbit {0b10000000}; // bit 7: sign flag
     static constexpr u8 zbit {0b01000000}; // bit 6: zero flag
@@ -258,9 +273,9 @@ private:
             case AddressMode::RegisterE: regs.e = val; return;
             case AddressMode::RegisterH: regs.h = val; return;
             case AddressMode::RegisterL: regs.l = val; return;
-            case AddressMode::RegisterBC: regs.b = val >> 8; regs.c = val & 0xFF; return;
-            case AddressMode::RegisterDE: regs.d = val >> 8; regs.e = val & 0xFF; return;
-            case AddressMode::RegisterHL: regs.h = val >> 8; regs.l = val & 0xFF; return;
+            case AddressMode::RegisterBC: regs.b = val >> 8U; regs.c = val & 0xFF; return;
+            case AddressMode::RegisterDE: regs.d = val >> 8U; regs.e = val & 0xFF; return;
+            case AddressMode::RegisterHL: regs.h = val >> 8U; regs.l = val & 0xFF; return;
             case AddressMode::RegisterSP: sp = val; return;
             case AddressMode::RegisterAF: {
                 a = val >> 8U;
@@ -275,11 +290,11 @@ private:
                 return;
             }
             case AddressMode::RegisterIX: ix = val; return;
-            case AddressMode::RegisterIXH: ix &= ~0xFF00 | val << 8U;
-            case AddressMode::RegisterIXL: ix &= ~0xFF | val & 0xFF;
+            case AddressMode::RegisterIXH: ix = (ix & 0x00FFU) | (val << 8U);
+            case AddressMode::RegisterIXL: ix = (ix & 0xFF00U) | (val & 0xFF);
             case AddressMode::RegisterIY: iy = val; return;
-            case AddressMode::RegisterIYH: iy &= ~0xFF00 | val << 8U;
-            case AddressMode::RegisterIYL: iy &= ~0xFF | val & 0xFF;
+            case AddressMode::RegisterIYH: iy = (iy & 0x00FFU) | (val << 8U);
+            case AddressMode::RegisterIYL: iy = (iy & 0xFF00U) | (val & 0xFF);
             case AddressMode::RegisterIndirectBC: write(regs.b << 8 | regs.c, val); return;
             case AddressMode::RegisterIndirectDE: write(regs.d << 8 | regs.e, val); return;
             case AddressMode::RegisterIndirectHL: write(regs.h << 8 | regs.l, val); return;
@@ -309,7 +324,7 @@ private:
             case AddressMode::RegisterDE: return regs.d << 8 | regs.e;
             case AddressMode::RegisterHL: return regs.h << 8 | regs.l;
             case AddressMode::RegisterSP: return sp;
-            case AddressMode::RegisterAF: return a << 8U | flag_();
+            case AddressMode::RegisterAF: return a << 8U | flag();
             case AddressMode::RegisterIX: return ix;
             case AddressMode::RegisterIXH: return ix >> 8U;
             case AddressMode::RegisterIXL: return ix & 0xFF;
@@ -343,7 +358,12 @@ private:
     /**
      * \brief Internal function used to execute a single instruction (macro op).
      */
-    void tick();
+    void tick()
+    {
+        u8 opcode {fetch8()};
+        (this->*instruction[opcode])();
+        requested -= cycles[opcode];
+    }
 
     // Helper member functions
     [[nodiscard]] static bool carry(const u16 sum) { return sum > 0xFFU; }
@@ -356,20 +376,32 @@ private:
     [[nodiscard]] static bool halfbw(const u8 minuend, const u8 subtrahend, const u16 difference) { return ~(minuend ^ subtrahend ^ difference) & 0x10U; }
     [[nodiscard]] u8 fetch8() { return read8(pc++); }
     [[nodiscard]] u16 fetch16() { pc += 2; return read16(pc - 2); };
-    [[nodiscard]] static u16 pair(const u8 hi, const u8 lo) { return hi << 8U | lo; }
     [[nodiscard]] static bool parity(const u8 val) { return std::popcount(val) % 2 == 0; }
 
     u16 top()
     {
-        u16 top {read8(sp++)};
-        top |= read8(sp++) << 8U;
+        const u16 top {read16(sp)};
+        sp += 2;
+        std::cout << "TOPPED " << (int) top << " ;)\n";
         return top;
     }
 
     void pushpc()
     {
-        write(sp--, static_cast<u8>(++pc >> 8U));
-        write(sp--, static_cast<u8>(pc & 0xFFU));
+        write(--sp, static_cast<u8>(pc >> 8U));
+        write(--sp, static_cast<u8>(pc & 0xFFU));
+    }
+
+    void fdefault(Flags& f)
+    {
+        flags.sf = sbit;
+        flags.zf = zbit;
+        flags.yf = ybit;
+        flags.hf = hbit;
+        flags.xf = xbit;
+        flags.pf = pbit;
+        flags.nf = nbit;
+        flags.cf = cbit;
     }
 
     void commonFlags(const u8 val)
@@ -933,22 +965,27 @@ private:
     template<Condition cond>
     void jr()
     {
+        const s8 d {static_cast<s8>(fetch8())};
         if (getCondition<cond>()) {
-            const s8 val {static_cast<s8>(read8(pc))};
-            pc += val;
+            pc += d;
         }
     }
 
     template<Condition cond, AddressMode mode>
-    void jp() { if (getCondition<cond>()) pc = getOperand<mode>(); }
+    void jp()
+    {
+        const u16 addr {getOperand<mode>()};
+        if (getCondition<cond>())
+            pc = addr;
+    }
 
     template<Condition cond, AddressMode mode>
     void call()
     {
+        const u16 addr {getOperand<mode>()};
         if (getCondition<cond>()) {
-            const u16 operand {getOperand<mode>()};
             pushpc();
-            pc = operand;
+            pc = addr;
         }
     }
 
@@ -1070,6 +1107,7 @@ private:
         const u8 opcode {fetch8()};
         (this->*indexInstruction<mode, modeH, modeL, modeD>[opcode])();
         requested -= indexCycles[opcode];
+        std::cout << "INDEX: " << (int) opcode << '\n';
     }
 
     template<AddressMode mode>
@@ -2146,83 +2184,80 @@ private:
     u8 imode {0}; // interrupt mode
     u8 ivector {0}; // interrupt vector
     bool halted {false};
-    int requested {};
-    u8 a2 {};
+
+    // shadow registers
+    u8 a2 {0xFF};
     Registers regs2 {};
     Flags flags2 {};
-    Memory memory {};
-    IO io {};
 };
 
-template<typename Memory, typename IO>
-int z80<Memory, IO>::run(const int cycles)
+template<typename Memory>
+int z80<Memory>::run(const int cycles)
 {
     requested = cycles;
-    while (requested > 0) {
-        // increment refresh register
-        r = (r & 0x80U) | (r + 1U & ~0x80U);
-
-        // handle non maskable interrupts
-        if (nmiRequested) {
-            iff2 = iff1;
-            iff1 = halted = nmiRequested = false;
-            rst<0x66>();
-            requested -= 11;
-            continue;
-        }
-
-        // handle maskable interrupts
-        if (intRequested & iff1) {
-            iff1 = iff2 = halted = intRequested = false;
-            pushpc();
-
-            if (imode == 0) {
-                pc = ivector;
-                requested -= 11;
-            } else if (imode == 1) {
-                pc = 0x38;
-                requested -= 13;
-            } else if (imode == 2) {
-                pc = (i << 8U) | (ivector & 0xFE);
-                requested -= 19;
-            }
-
-            continue;
-        }
-
-        // else execute an instruction
-        if (!halted)
-            tick();
-    }
+    while (requested > 0) step();
     return requested;
 }
 
-template<typename Memory, typename IO>
-void z80<Memory, IO>::reset()
-{
-    pc = i = r = imode = ivector = 0;
-    iff1 = iff2 = halted = false;
+template<typename Memory>
+void z80<Memory>::step()
+{// increment refresh register
+    r = (r & 0x80U) | (r + 1U & ~0x80U);
+
+    // handle non maskable interrupts
+    if (nmiRequested) {
+        iff2 = iff1;
+        iff1 = halted = nmiRequested = false;
+        rst<0x66>();
+        requested -= 11;
+        return;
+    }
+
+    // handle maskable interrupts
+    if (intRequested & iff1) {
+        iff1 = iff2 = halted = intRequested = false;
+        pushpc();
+
+        if (imode == 0) {
+            pc = ivector;
+            requested -= 11;
+        } else if (imode == 1) {
+            pc = 0x38;
+            requested -= 13;
+        } else if (imode == 2) {
+            pc = (i << 8U) | (ivector & 0xFE);
+            requested -= 19;
+        }
+        return;
+    }
+
+    // else execute an instruction
+    if (!halted)
+        tick();
 }
 
-template<typename Memory, typename IO>
-void z80<Memory, IO>::reqNmi()
+template<typename Memory>
+void z80<Memory>::reset()
+{
+    pc = i = r = imode = ivector = 0;
+    sp = 0xFFFF;
+    a = a2 = 0xFF;
+    iff1 = iff2 = halted = false;
+    fdefault(flags);
+    fdefault(flags2);
+}
+
+template<typename Memory>
+void z80<Memory>::reqNmi()
 {
     nmiRequested = true;
 }
 
-template<typename Memory, typename IO>
-void z80<Memory, IO>::reqInt(const u8 vector)
+template<typename Memory>
+void z80<Memory>::reqInt(const u8 vector)
 {
     intRequested = true;
     ivector = vector;
-}
-
-template<typename Memory, typename IO>
-void z80<Memory, IO>::tick()
-{
-    u8 opcode {fetch8()};
-    (this->*instruction[opcode])();
-    requested -= cycles[opcode];
 }
 
 #endif //Z80_LIBRARY_H
