@@ -1,39 +1,65 @@
 #include <fstream>
+#include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <format>
+#include <string>
 #include <array>
 #include <chrono>
 #include "z80.h"
+#include <nlohmann/json.hpp>
+using json = nlohmann::json;
 
-static constexpr u16 start {0x100};
+static constexpr std::uint16_t start {0x100};
 static constexpr int clockSpeed {static_cast<int>(2.5e6)}; // 2.5 MHz
 static constexpr int cycles {clockSpeed / 60};
+static constexpr bool logging {false};
+static constexpr bool verbose {false};
 
 struct Memory {
-    std::array<u8, 0x10000> ram {};
-    bool exit {false};
+    std::array<std::uint8_t, 0x10000> ram {};
+    bool exit {false}, cpm {true};
 
-    [[nodiscard]] u8 read8(const u16 addr) const { return ram[addr]; }
-    [[nodiscard]] u16 read16(const u16 addr) const { return ram[addr + 1] << 8 | ram[addr]; }
-    void write(const u16 addr, const u8 val) { ram[addr] = val; }
-    void write(const u16 addr, const u16 val) { ram[addr] = val >> 8; ram[addr + 1] = val & 0xFF; }
-
-    [[nodiscard]] u8 input(const z80<Memory>* cpu, const u8 port) const
+    [[nodiscard]] std::uint8_t read8(const std::uint16_t addr) const
     {
-        if (const u8 operation {cpu->regs.c}; operation == 2) {
-            // print a character stored in E
-            std::cout << static_cast<char>(cpu->regs.e);
-        } else if (operation == 9) {
-            // print from memory at (DE) until '$' char
-            std::uint16_t addr{z80<Memory>::pair(cpu->regs.d, cpu->regs.e)};
-            do {
-                std::cout << static_cast<char>(ram[addr++]);
-            } while (ram[addr] != '$');
+        if constexpr (verbose) std::cout << std::format("\tREAD: address=${:0>4X}, val=${:0>2X}\n", addr, ram[addr]);
+        return ram[addr];
+    }
+    [[nodiscard]] std::uint16_t read16(const std::uint16_t addr) const
+    {
+        if constexpr (verbose) std::cout << std::format("\tREAD: address=${:0>4X}, val=${:0>4X}\n", addr, ram[addr + 1] << 8 | ram[addr]);
+        return ram[static_cast<std::uint16_t>(addr + 1)] << 8 | ram[addr];
+    }
+    void write8(const std::uint16_t addr, const std::uint8_t val)
+    {
+        if constexpr (verbose) std::cout << std::format("\tWRITE: address=${:0>4X}, val=${:0>2X}\n", addr, val);
+        ram[addr] = val;
+    }
+    void write16(const std::uint16_t addr, const std::uint16_t val)
+    {
+        if constexpr (verbose) std::cout << std::format("\tWRITE: address=${:0>4X}, val=${:0>4X}\n", addr, val);
+        ram[addr] = val & 0xFF; ram[static_cast<std::uint16_t>(addr + 1)] = val >> 8;
+    }
+
+    [[nodiscard]] std::uint8_t input(const z80<Memory>* cpu, const std::uint8_t port) const
+    {
+        if (cpm) {
+            if (const std::uint8_t operation {cpu->regs.c}; operation == 2) {
+                // print a character stored in E
+                std::cout << static_cast<char>(cpu->regs.e);
+            } else if (operation == 9) {
+                // print from memory at (DE) until '$' char
+                std::uint16_t addr {static_cast<std::uint16_t>(cpu->regs.d << 8U | cpu->regs.e)};
+                do {
+                    std::cout << static_cast<char>(ram[addr++]);
+                } while (ram[addr] != '$');
+            }
+            return 0xFF;
         }
 
-        return 0xFFU;
+        return ram[port];
     }
-    void output(const z80<Memory>* cpu, const u8 port, const u8 val) { exit = true; }
+    void output(const z80<Memory>* cpu, const std::uint8_t port, const std::uint8_t val) { exit = true; }
 };
 
 int load(z80<Memory>& z, std::string path)
@@ -54,23 +80,9 @@ int load(z80<Memory>& z, std::string path)
     return 0;
 }
 
-void log(z80<Memory>& z, unsigned long long cycle)
+void log(const z80<Memory>& z, const unsigned long long cycle)
 {
-    std::cout << std::format(
-        "PC: {:0>4X}, AF: {:0>4X}, BC: {:0>4X}, DE: {:0>4X}, HL: {:0>4X}, SP: {:0>4X}, IX: {:0>4X}, IY: {:0>4X}, I: {:0>2X}, R: {:0>2X}",
-        z.pc,
-        z80<Memory>::pair(z.a, z.flag()),
-        z80<Memory>::pair(z.regs.b, z.regs.c),
-        z80<Memory>::pair(z.regs.d, z.regs.e),
-        z80<Memory>::pair(z.regs.h, z.regs.l),
-        z.sp, z.ix, z.iy, z.i, z.r)
-        << std::format("\t({:0>2X} {:0>2X} {:0>2X} {:0>2X}), cycle: {:d}\n",
-            z.memory.ram[z.pc],
-            z.memory.ram[z.pc + 1U],
-            z.memory.ram[z.pc + 2U],
-            z.memory.ram[z.pc + 3U],
-            cycle
-            );
+    std::cout << z.toString(cycle) << '\n';
 
 }
 
@@ -116,16 +128,16 @@ void test(z80<Memory>& z, std::string rom, const unsigned long long expected)
     const std::chrono::steady_clock::time_point begin {std::chrono::steady_clock::now()};
 
     // run the test
-    log(z, 0);
+    if constexpr (logging) log(z, 0);
     while(!z.memory.exit) {
         z.requested = cycles - z.requested;
 
-        while(z.requested > 0) {
+        while(z.requested > 0 and !z.memory.exit) {
             const int tmp {z.requested};
             z.step();
             ++count;
             executed += tmp - z.requested;
-            log(z, executed);
+            if constexpr(logging) log(z, executed);
         }
     }
 
@@ -135,6 +147,110 @@ void test(z80<Memory>& z, std::string rom, const unsigned long long expected)
            count, executed, expected, diff, formatTime(begin, std::chrono::steady_clock::now()));
 }
 
+bool equalityBool(const bool expected, const bool actual, const std::string& name)
+{
+    if (expected != actual)
+        std::cout << std::format("{:s}: expected {:s} got {:s}\n", name, expected ? "true" : "false", actual ? "true" : "false");
+    return expected == actual;
+}
+
+bool equality8(const std::uint8_t expected, const std::uint8_t actual, const std::string& name)
+{
+    if (expected != actual)
+        std::cout << std::format("{:s}: expected {:d} got {:d}\n", name, expected, actual);
+    return expected == actual;
+}
+
+bool equality16(const std::uint16_t expected, const std::uint16_t actual, const std::string& name)
+{
+    if (expected != actual)
+        std::cout << std::format("{:s}: expected {:d} got {:d}\n", name, expected, actual);
+    return expected == actual;
+}
+
+bool unitTest(z80<Memory>& z, const std::filesystem::path& path)
+{
+    std::ifstream f {path};
+    json j = json::parse(f);
+
+    const std::chrono::steady_clock::time_point begin {std::chrono::steady_clock::now()};
+    bool passed {true};
+    auto& lastTest {j[0]};
+
+    for (const auto& test : j) {
+        if (!passed) break;
+
+        // set initial processor state from test
+        z.reset();
+        z.pc = test["initial"]["pc"];
+        z.wz = test["initial"]["wz"];
+        z.sp = test["initial"]["sp"];
+        z.a = test["initial"]["a"];
+        z.setf(z.flags, test["initial"]["f"]);
+        z.regs.b = test["initial"]["b"];
+        z.regs.c = test["initial"]["c"];
+        z.regs.d = test["initial"]["d"];
+        z.regs.e = test["initial"]["e"];
+        z.regs.h = test["initial"]["h"];
+        z.regs.l = test["initial"]["l"];
+        z.r = test["initial"]["r"];
+        z.i = test["initial"]["i"];
+        z.ix = test["initial"]["ix"];
+        z.iy = test["initial"]["iy"];
+        z.imode = test["initial"]["im"];
+        z.iff1 = test["initial"]["iff1"] != 0;
+        z.iff2 = test["initial"]["iff2"] != 0;
+        z.flagsWereModified = test["initial"]["q"] != 0;
+
+        // set initial RAM state from test
+        for (const auto& data : test["initial"]["ram"])
+            z.memory.ram[data[0]] = data[1];
+
+        // set PORTs for input
+        if (test.contains("ports")) {
+            for (const auto& data : test["ports"]) {
+                if (data[2] != "r") continue;
+                std::uint8_t port {data[0]};
+                z.memory.ram[port] = data[1];
+            }
+        }
+
+        // step the processor
+        z.step();
+
+        // compare final RAM state to test and report any errors
+        for (const auto& data : test["final"]["ram"])
+            passed &= equality8(data[1], z.memory.ram[data[0]], "RAM");
+
+        // compare final processor state to test and report any errors
+        passed &= equality16(test["final"]["pc"], z.pc, "PC");
+        passed &= equality16(test["final"]["wz"], z.wz, "WZ");
+        passed &= equality16(test["final"]["sp"], z.sp, "SP");
+        passed &= equality8(test["final"]["a"], z.a, "A");
+        passed &= equality8(test["final"]["f"], z.getf(), "F");
+        passed &= equality8(test["final"]["b"], z.regs.b, "B");
+        passed &= equality8(test["final"]["c"], z.regs.c, "C");
+        passed &= equality8(test["final"]["d"], z.regs.d, "D");
+        passed &= equality8(test["final"]["e"], z.regs.e, "E");
+        passed &= equality8(test["final"]["h"], z.regs.h, "H");
+        passed &= equality8(test["final"]["l"], z.regs.l, "L");
+        passed &= equality8(test["final"]["r"], z.r, "R");
+        passed &= equality8(test["final"]["i"], z.i, "I");
+        passed &= equality16(test["final"]["ix"], z.ix, "IX");
+        passed &= equality16(test["final"]["iy"], z.iy, "IY");
+        passed &= equality8(test["final"]["im"], z.imode, "IM");
+        passed &= equalityBool(test["final"]["iff1"] != 0, z.iff1, "IFF1");
+        passed &= equalityBool(test["final"]["iff2"] != 0, z.iff2, "IFF2");
+
+        lastTest = test;
+    }
+
+    if (!passed)
+        std::cout << "FAILED " << path.string() << ' ' << lastTest["name"] << "\nCPU STATE=" << z.toString() << '\n' << "TEST CASE=" << lastTest.dump() << "\n\n";
+
+    return passed;
+}
+
 int main(int argc, char** argv)
 {
     const std::string env {argv[0]};
@@ -142,10 +258,27 @@ int main(int argc, char** argv)
 
     const std::chrono::steady_clock::time_point begin {std::chrono::steady_clock::now()};
 
-    // run test roms
+    // run test roms (https://github.com/superzazu/z80/tree/master/roms)
     test(z, "tests/test-roms/prelim.com", 8721ULL);
-    //test(z, env + "/../test-roms/zexdoc.com", 46734978649ULL);
-    //test(z, env + "/../test-roms/zexall.com", 46734978649ULL);
+    test(z, "tests/test-roms/zexdoc.cim", 46734978649ULL);
+    test(z, "tests/test-roms/zexall.cim", 46734978649ULL);
+
+    // run unit tests
+    /*
+        Get the *.json files from here (https://github.com/raddad772/jsmoo/tree/main/misc/tests/GeneratedTests/z80)
+        Known to fail the following:
+            - Unimplemented: ED 77, ED 76, ED 66, ED 4E, ED 6E, ED 7E, ED 7F
+            - I/O Related: 08, D9, DD 08, DD D9, FD 08, FD 09,
+            - LDI/LDIR/LDD/LDDR/CPI/CPIR/CPD/CPDR/INI/INIR/IND/INDR/OUTI/OTIR/OUTD/OTDR: Flags XF and YF
+    z.memory.cpm = false;
+    std::cout << "*** Running unit tests\n";
+    int passed {0}, failed {0};
+    const std::chrono::steady_clock::time_point begin2 {std::chrono::steady_clock::now()};
+    for (const auto & entry : std::filesystem::directory_iterator("tests/unit-tests"))
+        unitTest(z, entry.path()) ? ++passed : ++failed;
+
+    std::cout << std::format("*** Unit testing complete in {:s}. Passed {:d}, Failed {:d}\n\n", formatTime(begin2, std::chrono::steady_clock::now()), passed, failed);
+    */
 
     std::cout << "Done. Total time elapsed " << formatTime(begin, std::chrono::steady_clock::now()) << std::endl;
 }
