@@ -26,7 +26,7 @@ FetchContent_MakeAvailable(z80)
 add_executable(${PROJECT_NAME} main.cpp)
 target_link_libraries(${PROJECT_NAME} z80)
 ```
-Then you can use it simply by `#include "z80.h"`.
+Then simply `#include "z80.h"`.
 
 ## Running tests
 Add the required files to [tests-roms](tests/test-roms) and (optionally) [unit-tests](tests/unit-tests).
