@@ -15,8 +15,18 @@ See [header file](include/z80.h)
 ### Adding to project
 Using CMake's `FetchContent`, add this to your CMakeLists.txt file:
 ```angular2html
+include(FetchContent)
+FetchContent_Declare(
+z80
+GIT_REPOSITORY "https://github.com/harrow22/z80.git"
+)
+set(TEST_Z80 OFF)
+FetchContent_MakeAvailable(z80)
 
+add_executable(${PROJECT_NAME} main.cpp)
+target_link_libraries(${PROJECT_NAME} z80)
 ```
+Then you can use it simply by `#include "z80.h"`.
 
 ## Running tests
 Add the required files to [tests-roms](tests/test-roms) and (optionally) [unit-tests](tests/unit-tests).
